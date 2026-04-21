@@ -1,0 +1,268 @@
+@import "tailwindcss";
+@import "@vscode/codicons/dist/codicon.css";
+
+/* ─── Reset ─────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #333;
+  background: #1e1e1e;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Allow text selection inside inputs */
+input, textarea, pre, code {
+  user-select: text;
+  font-family: inherit;
+}
+
+/* ─── VS Code-style form elements ────────────────────────────────────────── */
+
+input[type="text"],
+input[type="password"],
+input[type="search"],
+input[type="email"],
+input[type="url"],
+textarea,
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: #ffffff;
+  border: 1px solid #cecece;
+  border-radius: 2px;
+  color: #333;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 4px 8px;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.1s;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="search"]:focus,
+textarea:focus,
+select:focus {
+  border-color: #0078d4;
+}
+
+input[type="text"]::placeholder,
+input[type="password"]::placeholder,
+textarea::placeholder {
+  color: #aaa;
+}
+
+input[type="text"]:read-only {
+  background: #f5f5f5;
+  color: #777;
+}
+
+select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+  cursor: pointer;
+}
+
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button {
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  background: none;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* ─── VS Code Primary Button ─────────────────────────────────────────────── */
+
+.btn-primary {
+  background: #0078d4;
+  color: #fff;
+  border-radius: 2px;
+  padding: 5px 12px;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  transition: background 0.1s;
+}
+
+.btn-primary:hover:not(:disabled) { background: #106ebe; }
+.btn-primary:active:not(:disabled) { background: #005a9e; }
+.btn-primary:disabled { opacity: 0.45; }
+
+.btn-secondary {
+  background: #fff;
+  color: #333;
+  border-radius: 2px;
+  padding: 5px 12px;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #cecece;
+  transition: background 0.1s;
+}
+
+.btn-secondary:hover:not(:disabled) { background: #f0f0f0; border-color: #bbb; }
+.btn-secondary:disabled { opacity: 0.45; }
+
+/* ─── Section label (VS Code sidebar headers) ────────────────────────────── */
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6f6f6f;
+}
+
+/* ─── VS Code tree rows ──────────────────────────────────────────────────── */
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  cursor: pointer;
+  border-radius: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tree-row:hover { background: rgba(0,0,0,0.06); }
+.tree-row.active { background: #d6ebff; color: #00539c; }
+.tree-row.drag-over { background: #e2f2ff; border: 1px solid #0078d4; }
+
+.tree-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-right: 4px;
+}
+.tree-row:hover .tree-actions { display: flex; }
+.tree-actions button {
+  color: #666;
+  padding: 1px;
+  line-height: 1;
+  border-radius: 2px;
+}
+.tree-actions button:hover {
+  background: rgba(0,0,0,0.1);
+  color: #333;
+}
+.tree-actions .delete-btn:hover {
+  color: #e81123;
+  background: #fee6e6;
+}
+
+.rename-input {
+  flex: 1;
+  height: 18px !important;
+  font-size: 12px !important;
+  padding: 0 4px !important;
+  border: 1px solid #0078d4 !important;
+  background: #fff !important;
+  border-radius: 0 !important;
+  margin-right: 4px;
+}
+
+.tree-row:hover .preview-btn { display: inline-flex !important; }
+.tree-row.active .preview-btn { display: inline-flex !important; }
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.15);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
+
+/* ─── Codicon sizing ─────────────────────────────────────────────────────── */
+
+.codicon { line-height: 1; }
+
+/* ─── Spinning animation for loading ────────────────────────────────────── */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.codicon-modifier-spin { display: inline-block; animation: spin 1.2s linear infinite; }
+
+/* ─── Monospace code blocks ──────────────────────────────────────────────── */
+
+pre, code, .mono {
+  font-family: "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace;
+  font-size: 12px;
+}
+
+/* ─── Context Menu ────────────────────────────────────────────────────────── */
+
+.context-menu {
+  position: fixed;
+  background: #ffffff;
+  border: 1px solid #cecece;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  padding: 4px 0;
+  z-index: 1000;
+  min-width: 180px;
+  user-select: none;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #333;
+}
+
+.context-menu-item:hover {
+  background: #0078d4;
+  color: #fff !important;
+}
+
+.context-menu-item:hover .codicon {
+  color: #fff !important;
+}
+
+.context-menu-item .codicon {
+  font-size: 14px;
+  color: #666;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: #e5e5e5;
+  margin: 4px 0;
+}
