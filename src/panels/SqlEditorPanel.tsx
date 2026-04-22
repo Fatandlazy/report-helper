@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Editor from "@monaco-editor/react";
 import { DbConnection, QueryResult } from "../types";
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
   onRemoveConnection: (id: string) => void;
   onUpdateConnection: (conn: DbConnection) => void;
   onStatus: (left: string, right: string) => void;
+  sidebarVisible: boolean;
 }
 
 const SAMPLE_SQL = `SELECT
@@ -19,13 +21,76 @@ const SAMPLE_SQL = `SELECT
 type FormMode = "add" | "edit" | null;
 type TestState = "idle" | "testing" | "ok" | "fail";
 
-export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnection, onUpdateConnection, onStatus }: Props) {
+export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnection, onUpdateConnection, onStatus, sidebarVisible }: Props) {
   const [connId, setConnId] = useState(connections[0]?.id ?? "");
   const [sql, setSql] = useState(SAMPLE_SQL);
   const [isSample, setIsSample] = useState(true);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editorHeight, setEditorHeight] = useState(300);
+  const [isResizing, setIsResizing] = useState(false);
+  const [schema, setSchema] = useState<{ tables: string[], columns: string[] }>({ tables: [], columns: [] });
+  const schemaRef = useRef(schema);
+  const completionProviderRef = useRef<any>(null);
+
+  useEffect(() => {
+    schemaRef.current = schema;
+  }, [schema]);
+
+  useEffect(() => {
+    const conn = connections.find(c => c.id === connId);
+    if (!conn) return;
+
+    const fetchSchema = async () => {
+      try {
+        const tablesRes = await invoke<QueryResult>("run_sql", {
+          sql: "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'",
+          connectionString: conn.connectionString,
+          params: {},
+          isStoredProc: false,
+        });
+        const tableNames = tablesRes.rows.map(r => String(Object.values(r)[0]));
+        
+        const colsRes = await invoke<QueryResult>("run_sql", {
+          sql: "SELECT DISTINCT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS",
+          connectionString: conn.connectionString,
+          params: {},
+          isStoredProc: false,
+        });
+        const colNames = colsRes.rows.map(r => String(Object.values(r)[0]));
+        
+        setSchema({ tables: tableNames, columns: colNames });
+      } catch (e) {
+        console.error("Failed to fetch schema", e);
+      }
+    };
+    fetchSchema();
+  }, [connId, connections]);
+
+  const startResizing = (e: React.MouseEvent) => {
+    setIsResizing(true);
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const container = document.getElementById("sql-editor-container");
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const newHeight = Math.max(100, Math.min(window.innerHeight - 300, e.clientY - rect.top));
+        setEditorHeight(newHeight);
+      }
+    };
+    const handleMouseUp = () => setIsResizing(false);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing]);
 
   // Connection form
   const [formMode, setFormMode] = useState<FormMode>(null);
@@ -124,7 +189,8 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
     <div style={{ display: "flex", height: "100%", overflow: "hidden", background: "#fff" }}>
 
       {/* ── Side: Connections ── */}
-      <div style={{ width: 260, background: "#f3f3f3", borderRight: "1px solid #e0e0e0", flexShrink: 0, display: "flex", flexDirection: "column" }}>
+      {sidebarVisible && (
+        <div style={{ width: 260, background: "#f3f3f3", borderRight: "1px solid #e0e0e0", flexShrink: 0, display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "10px 12px", borderBottom: "1px solid #e0e0e0", overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <span className="section-label">Connections</span>
@@ -227,6 +293,7 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
           <span style={{ fontSize: 11, color: "#aaa" }}>Ctrl+Enter to run</span>
         </div>
       </div>
+      )}
 
       {/* ── Main: SQL editor + results ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -255,30 +322,84 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
           </button>
         </div>
 
-        {/* SQL textarea */}
-        <textarea
-          value={sql}
-          onChange={e => {
-            if (isSample) {
-              setIsSample(false);
-              setSql(e.target.value.replace(SAMPLE_SQL, ""));
-            } else {
-              setSql(e.target.value);
-            }
-          }}
-          onFocus={() => { if (isSample) { setSql(""); setIsSample(false); } }}
-          onKeyDown={handleKeyDown}
-          placeholder="-- Write SQL here, Ctrl+Enter to run"
-          spellCheck={false}
-          style={{
-            flex: "0 0 200px", padding: "10px 14px",
-            fontFamily: "'Cascadia Code','Fira Code','Consolas',monospace",
-            fontSize: 13, lineHeight: 1.5,
-            resize: "none", border: "none", outline: "none",
-            borderBottom: "1px solid #e8e8e8",
-            color: isSample ? "#aaa" : "#1e1e1e",
-          }}
-        />
+        {/* SQL Monaco Editor */}
+        <div id="sql-editor-container" style={{ position: "relative", flex: `0 0 ${editorHeight}px`, borderBottom: "1px solid #e8e8e8" }}>
+          <Editor
+            height="100%"
+            defaultLanguage="sql"
+            value={sql}
+            onChange={val => {
+              if (isSample && val && val !== SAMPLE_SQL) {
+                setIsSample(false);
+              }
+              setSql(val || "");
+            }}
+            onMount={(editor, monaco) => {
+              // Dispose previous provider if exists
+              if (completionProviderRef.current) {
+                completionProviderRef.current.dispose();
+              }
+
+              // Register SQL suggestions
+              completionProviderRef.current = monaco.languages.registerCompletionItemProvider("sql", {
+                provideCompletionItems: (model, position) => {
+                  const suggestions: any[] = [
+                    ...schemaRef.current.tables.map(t => ({
+                      label: t,
+                      kind: monaco.languages.CompletionItemKind.Class,
+                      insertText: t,
+                      detail: "Table"
+                    })),
+                    ...schemaRef.current.columns.map(c => ({
+                      label: c,
+                      kind: monaco.languages.CompletionItemKind.Field,
+                      insertText: c,
+                      detail: "Column"
+                    })),
+                    // Basic keywords
+                    ...["SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "ON", "GROUP BY", "ORDER BY", "HAVING", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "DROP", "CREATE", "ALTER", "TABLE", "DATABASE", "PROCEDURE", "EXEC", "DECLARE", "AS", "INTO", "VALUES", "SET", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "IS", "NULL", "EXISTS", "TOP", "DISTINCT", "COUNT", "SUM", "AVG", "MIN", "MAX", "NVARCHAR", "INT", "BIT", "DATETIME", "MONEY", "DECIMAL"].map(k => ({
+                      label: k,
+                      kind: monaco.languages.CompletionItemKind.Keyword,
+                      insertText: k,
+                    }))
+                  ];
+                  return { suggestions };
+                }
+              });
+
+              editor.onDidFocusEditorText(() => {
+                if (isSample) {
+                  setSql("");
+                  setIsSample(false);
+                }
+              });
+              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+                handleRun();
+              });
+            }}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 13,
+              fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+              automaticLayout: true,
+              scrollBeyondLastLine: false,
+              wordWrap: "on",
+              padding: { top: 10, bottom: 10 }
+            }}
+          />
+          {/* Resizer Handle */}
+          <div 
+            onMouseDown={startResizing}
+            style={{
+              height: 4, cursor: "ns-resize", 
+              background: isResizing ? "#007fd4" : "transparent",
+              position: "absolute", bottom: -2, left: 0, right: 0, zIndex: 10,
+              transition: "background 0.1s"
+            }}
+            onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.3)"; }}
+            onMouseLeave={e => { if (!isResizing) e.currentTarget.style.background = "transparent"; }}
+          />
+        </div>
 
         {/* Error */}
         {error && (

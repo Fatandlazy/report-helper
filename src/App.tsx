@@ -21,6 +21,16 @@ export default function App() {
 
   const { tabs, activeId, activeTab, openTab, closeTab, closeTabsByPath, setTabView, setActiveId } = useTabs();
   const [status, setStatus] = useState({ left: "", right: "" });
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+
+  function handleSectionChange(newSection: Section) {
+    if (newSection === settings.lastSection) {
+      setSidebarVisible(!sidebarVisible);
+    } else {
+      setSection(newSection);
+      setSidebarVisible(true);
+    }
+  }
 
   function onStatus(left: string, right: string) {
     setStatus({ left, right });
@@ -53,10 +63,10 @@ export default function App() {
       <TitleBar />
 
       <div className="flex flex-1 overflow-hidden">
-        <ActivityBar active={section} onChange={setSection} />
+        <ActivityBar active={section} onChange={handleSectionChange} />
 
-        {/* Side panel — hidden for sqleditor */}
-        {section !== "sqleditor" && (
+        {/* Side panel — hidden for sqleditor or if toggled off */}
+        {section !== "sqleditor" && sidebarVisible && (
           <div
             className="flex flex-col border-r overflow-hidden"
             style={{ width: 280, borderColor: "#d4d4d4", flexShrink: 0 }}
@@ -93,6 +103,7 @@ export default function App() {
               onRemoveConnection={removeConnection}
               onUpdateConnection={updateConnection}
               onStatus={onStatus}
+              sidebarVisible={sidebarVisible}
             />
           ) : (
             <>

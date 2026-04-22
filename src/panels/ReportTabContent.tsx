@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Editor from "@monaco-editor/react";
 import { ReportTab, TabView, ReportMetadata, DataSetInfo, DbConnection, QueryResult, ReportParameter, ParameterValue, DataSourceInfo, QueryParameter } from "../types";
 
 interface Props {
@@ -57,18 +58,6 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
         height: 35, padding: "0 12px",
         borderBottom: "1px solid #e8e8e8", background: "#f8f8f8", flexShrink: 0,
       }}>
-        <span className={`codicon ${isServerTab ? "codicon-cloud" : "codicon-file-code"}`} style={{ fontSize: 14, color: "#519aba", marginRight: 8, flexShrink: 0 }} />
-        <span style={{
-          fontSize: 13, color: "#444", fontWeight: 500,
-          maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          marginRight: 12, flexShrink: 0,
-        }} title={tab.serverPath ?? tab.path}>
-          {tab.title}
-        </span>
-
-        {/* Divider */}
-        <div style={{ width: 1, height: 16, background: "#ddd", marginRight: 10, flexShrink: 0 }} />
-
         {visibleViews.map(btn => {
           const isActive = tab.activeView === btn.id;
           return (
@@ -370,6 +359,33 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [editorHeight, setEditorHeight] = useState(160);
+  const [isResizing, setIsResizing] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+
+  const startResizing = (e: React.MouseEvent) => {
+    setIsResizing(true);
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const container = document.getElementById("sql-tester-editor-container");
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const newHeight = Math.max(80, Math.min(window.innerHeight - 300, e.clientY - rect.top));
+        setEditorHeight(newHeight);
+      }
+    };
+    const handleMouseUp = () => setIsResizing(false);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing]);
 
   const displaySql = useMemo(() => {
     if (!selectedDs) return "";
@@ -461,12 +477,13 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
 
       {/* Controls */}
-      <div style={{
-        width: 240, flexShrink: 0, borderRight: "1px solid #e8e8e8",
-        background: "#f8f8f8", overflowY: "auto", padding: "12px",
-        display: "flex", flexDirection: "column", gap: 12,
-      }}>
-        <div>
+      {sidebarVisible && (
+        <div style={{
+          width: 240, flexShrink: 0, borderRight: "1px solid #e8e8e8",
+          background: "#f8f8f8", overflowY: "auto", padding: "12px",
+          display: "flex", flexDirection: "column", gap: 12,
+        }}>
+          <div>
           <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 4 }}>Dataset</label>
           <select
             value={selectedDs?.name ?? ""}
@@ -493,12 +510,30 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
               {params.map(p => (
                 <div key={p.name}>
                   <div style={{ fontSize: 12, fontFamily: "monospace", color: "#0000cc", marginBottom: 3 }}>@{p.name}</div>
-                  <input
-                    type="text"
-                    value={p.value}
-                    placeholder={p.prompt}
-                    onChange={e => setParams(ps => ps.map(x => x.name === p.name ? { ...x, value: e.target.value } : x))}
-                  />
+                  {p.dataType === "Boolean" ? (
+                    <div 
+                      style={{ 
+                        display: "flex", alignItems: "center", gap: 8, 
+                        padding: "4px 8px", background: "#eee", borderRadius: 4,
+                        cursor: "pointer", width: "fit-content"
+                      }}
+                      onClick={() => {
+                        const isTrue = p.value.toLowerCase() === "true" || p.value === "1";
+                        setParams(ps => ps.map(x => x.name === p.name ? { ...x, value: isTrue ? "False" : "True" } : x));
+                      }}
+                    >
+                      <span className={`codicon ${p.value.toLowerCase() === "true" || p.value === "1" ? "codicon-check" : "codicon-chrome-close"}`} 
+                            style={{ fontSize: 14, color: (p.value.toLowerCase() === "true" || p.value === "1") ? "#28a745" : "#dc3545" }} />
+                      <span style={{ fontSize: 12, fontWeight: 500 }}>{(p.value.toLowerCase() === "true" || p.value === "1") ? "True" : "False"}</span>
+                    </div>
+                  ) : (
+                    <input
+                      type={p.dataType === "Integer" || p.dataType === "Float" ? "number" : "text"}
+                      value={p.value}
+                      placeholder={p.prompt}
+                      onChange={e => setParams(ps => ps.map(x => x.name === p.name ? { ...x, value: e.target.value } : x))}
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -515,19 +550,59 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
           {running ? "Running…" : "Run"}
         </button>
       </div>
+      )}
 
       {/* SQL + Results */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ 
+          display: "flex", alignItems: "center", height: 32, padding: "0 12px", 
+          borderBottom: "1px solid #e8e8e8", background: "#fafafa" 
+        }}>
+          <button 
+            onClick={() => setSidebarVisible(!sidebarVisible)}
+            style={{ 
+              background: "none", border: "none", cursor: "pointer", color: "#666",
+              display: "flex", alignItems: "center", gap: 4, fontSize: 11
+            }}
+          >
+            <span className={`codicon ${sidebarVisible ? "codicon-layout-sidebar-left" : "codicon-layout-sidebar-left-off"}`} />
+            {sidebarVisible ? "Hide Sidebar" : "Show Sidebar"}
+          </button>
+        </div>
         {selectedDs && (
-          <div style={{ position: "relative", flexShrink: 0, borderBottom: "1px solid #e8e8e8" }}>
-            <pre style={{
-              margin: 0, padding: "8px 14px", overflowY: "auto", maxHeight: 160,
-              fontSize: 12, lineHeight: 1.6,
-              fontFamily: "'Cascadia Code','Fira Code','Consolas',monospace",
-              color: "#1e1e1e", background: "#fafafa", whiteSpace: "pre-wrap",
-            }}>
-              {displaySql}
-            </pre>
+          <div id="sql-tester-editor-container" style={{ position: "relative", flexShrink: 0, borderBottom: "1px solid #e8e8e8" }}>
+            <div style={{ height: editorHeight, borderBottom: "1px solid #e8e8e8" }}>
+              <Editor
+                height="100%"
+                defaultLanguage="sql"
+                value={displaySql}
+                theme="vs"
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  fontSize: 12,
+                  fontFamily: "'Cascadia Code','Fira Code','Consolas',monospace",
+                  lineNumbers: "on",
+                  folding: true,
+                  wordWrap: "on",
+                  automaticLayout: true,
+                  padding: { top: 8, bottom: 8 }
+                }}
+              />
+            </div>
+            {/* Resizer Handle */}
+            <div 
+              onMouseDown={startResizing}
+              style={{
+                height: 4, cursor: "ns-resize", 
+                background: isResizing ? "#007fd4" : "transparent",
+                position: "absolute", bottom: -2, left: 0, right: 0, zIndex: 10,
+                transition: "background 0.1s"
+              }}
+              onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.3)"; }}
+              onMouseLeave={e => { if (!isResizing) e.currentTarget.style.background = "transparent"; }}
+            />
             <button
               onClick={handleCopySql}
               title="Copy SQL"
