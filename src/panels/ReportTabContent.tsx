@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ReportTab, TabView, ReportMetadata, DataSetInfo, DbConnection, QueryResult, ReportParameter, ParameterValue, DataSourceInfo } from "../types";
+import { ReportTab, TabView, ReportMetadata, DataSetInfo, DbConnection, QueryResult, ReportParameter, ParameterValue, DataSourceInfo, QueryParameter } from "../types";
 
 interface Props {
   tab: ReportTab;
@@ -405,9 +405,21 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
 
   function buildParams(ds: DataSetInfo) {
     const sql = ds.commandText ?? "";
-    const relevant = metadata.parameters.filter((p: ReportParameter) =>
-      sql.toLowerCase().includes("@" + p.name.toLowerCase())
-    );
+    let relevant: ReportParameter[] = [];
+    
+    if (ds.queryParameters && ds.queryParameters.length > 0) {
+      relevant = metadata.parameters.filter(p => 
+        ds.queryParameters!.some((qp: QueryParameter) => {
+          const match = qp.value.match(/Parameters!([^.]+)/i);
+          const paramName = match ? match[1] : qp.name.replace('@', '');
+          return paramName.toLowerCase() === p.name.toLowerCase();
+        })
+      );
+    } else {
+      relevant = metadata.parameters.filter((p: ReportParameter) =>
+        sql.toLowerCase().includes("@" + p.name.toLowerCase())
+      );
+    }
     setParams(relevant.map(p => ({ name: p.name, prompt: p.prompt, dataType: p.dataType, value: p.defaultValue ?? "" })));
     setResult(null);
     setError(null);
@@ -592,15 +604,37 @@ function ParameterInput({
   const [dynamicValues, setDynamicValues] = useState<ParameterValue[]>([]);
 
   const ref = p.availableValues?.dataSetReference;
-  const ds = ref && metadata ? metadata.dataSets.find((d: DataSetInfo) => d.name === ref.dataSetName) : null;
+  const ds = ref && metadata ? metadata.dataSets.find((d: DataSetInfo) => d.name.toLowerCase() === ref.dataSetName.toLowerCase()) : null;
   
   // Extract only the params that this dataset's query actually uses
   const relevantParams: Record<string, string> = {};
-  if (ds && ds.commandText) {
-    const sqlLower = ds.commandText.toLowerCase();
-    for (const key of Object.keys(allParams)) {
-      if (sqlLower.includes(`@${key.toLowerCase()}`)) {
-        relevantParams[key] = allParams[key];
+  if (ds) {
+    if (ds.queryParameters && ds.queryParameters.length > 0) {
+      // Use exact mapping from RDL
+      ds.queryParameters.forEach((qp: QueryParameter) => {
+        // qp.value is like "=Parameters!ReportParamName.Value"
+        const match = qp.value.match(/Parameters!([^.]+)/i);
+        const paramName = match ? match[1] : qp.name.replace('@', '');
+        
+        // Find corresponding value in allParams (case insensitive)
+        const allParamsKey = Object.keys(allParams).find(k => k.toLowerCase() === paramName.toLowerCase());
+        if (allParamsKey) {
+          let val = allParams[allParamsKey];
+          if (val.toLowerCase() === "true") val = "1";
+          else if (val.toLowerCase() === "false") val = "0";
+          relevantParams[qp.name.replace('@', '')] = val;
+        }
+      });
+    } else if (ds.commandText) {
+      // Fallback
+      const sqlLower = ds.commandText.toLowerCase();
+      for (const key of Object.keys(allParams)) {
+        if (sqlLower.includes(`@${key.toLowerCase()}`)) {
+          let val = allParams[key];
+          if (val.toLowerCase() === "true") val = "1";
+          else if (val.toLowerCase() === "false") val = "0";
+          relevantParams[key] = val;
+        }
       }
     }
   }
@@ -618,10 +652,16 @@ function ParameterInput({
           params: relevantParams,
           isStoredProc: ds.commandType.toLowerCase().includes("stored"),
         }).then(res => {
-          const list = res.rows.map(row => ({
-            label: String(row[ref.labelField] ?? row[ref.valueField] ?? ""),
-            value: String(row[ref.valueField] ?? ""),
-          }));
+          const getCaseInsensitive = (obj: any, key: string) => {
+            if (!key) return undefined;
+            const k = Object.keys(obj).find(k => k.toLowerCase() === key.toLowerCase());
+            return k ? obj[k] : undefined;
+          };
+          const list = res.rows.map(row => {
+            const lbl = getCaseInsensitive(row, ref.labelField) ?? getCaseInsensitive(row, ref.valueField) ?? "";
+            const val = getCaseInsensitive(row, ref.valueField) ?? "";
+            return { label: String(lbl), value: String(val) };
+          });
           setDynamicValues(list);
         }).catch(err => {
           console.error("Failed to fetch dynamic values for parameter", p.name, err);
@@ -632,7 +672,9 @@ function ParameterInput({
   }, [ref?.dataSetName, activeConnectionId, relevantParamsKey]);
 
   const hasAvailable = p.availableValues && (p.availableValues.staticValues.length > 0 || p.availableValues.dataSetReference);
-  const options = p.availableValues?.staticValues || dynamicValues;
+  const options = (p.availableValues?.staticValues && p.availableValues.staticValues.length > 0) 
+    ? p.availableValues.staticValues 
+    : dynamicValues;
 
   if (hasAvailable) {
     return (
@@ -664,7 +706,7 @@ function ParameterInput({
         }}
         onClick={() => {
           const isTrue = value.toLowerCase() === "true" || value === "1";
-          onChange(isTrue ? "0" : "1");
+          onChange(isTrue ? "False" : "True");
         }}
       >
         <span className={`codicon ${value.toLowerCase() === "true" || value === "1" ? "codicon-check" : "codicon-chrome-close"}`} 

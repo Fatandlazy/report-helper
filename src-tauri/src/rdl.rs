@@ -4,11 +4,19 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct QueryParameter {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct DataSetInfo {
     pub name: String,
     pub command_text: String,
     pub command_type: String,
     pub data_source_name: String,
+    pub query_parameters: Vec<QueryParameter>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -76,6 +84,7 @@ pub fn parse_rdl(path: &str) -> Result<ReportMetadata, String> {
     let mut cur_datasource: Option<DataSourceInfo> = None;
     let mut cur_param_value: Option<ParameterValue> = None;
     let mut cur_ds_ref: Option<DataSetReference> = None;
+    let mut cur_query_param: Option<QueryParameter> = None;
     let mut cur_text = String::new();
 
     loop {
@@ -105,6 +114,11 @@ pub fn parse_rdl(path: &str) -> Result<ReportMetadata, String> {
                     }
                     "DataSetReference" => {
                         cur_ds_ref = Some(DataSetReference::default());
+                    }
+                    "QueryParameter" => {
+                        let mut qp = QueryParameter::default();
+                        qp.name = attr_value(&e, b"Name").unwrap_or_default();
+                        cur_query_param = Some(qp);
                     }
                     _ => {}
                 }
@@ -173,6 +187,10 @@ pub fn parse_rdl(path: &str) -> Result<ReportMetadata, String> {
                             if let Some(v) = &mut cur_param_value {
                                 v.value = cur_text.trim().to_string();
                             }
+                        } else if depth_path.contains("QueryParameter") {
+                            if let Some(qp) = &mut cur_query_param {
+                                qp.value = cur_text.trim().to_string();
+                            }
                         }
                     }
                     "Label" => {
@@ -210,6 +228,13 @@ pub fn parse_rdl(path: &str) -> Result<ReportMetadata, String> {
                             if let Some(p) = &mut cur_param {
                                 let av = p.available_values.get_or_insert_with(AvailableValues::default);
                                 av.data_set_reference = Some(ds_ref);
+                            }
+                        }
+                    }
+                    "QueryParameter" => {
+                        if let Some(qp) = cur_query_param.take() {
+                            if let Some(ds) = &mut cur_dataset {
+                                ds.query_parameters.push(qp);
                             }
                         }
                     }

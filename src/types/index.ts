@@ -39,11 +39,17 @@ export interface AppSettings {
   activeConnectionId: string;
 }
 
+export interface QueryParameter {
+  name: string;
+  value: string;
+}
+
 export interface DataSetInfo {
   name: string;
   commandText: string;
   commandType: string;
   dataSourceName: string;
+  queryParameters?: QueryParameter[];
 }
 
 export interface DataSourceInfo {
