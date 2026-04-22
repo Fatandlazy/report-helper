@@ -33,17 +33,34 @@ pub async fn run_sql(
         .await
         .map_err(|e| format!("SQL connect failed: {e}"))?;
 
-    let bound_params: Vec<String> = params
+    let bound_params: Vec<(String, String)> = params
         .iter()
         .filter(|(k, _)| {
             let param_ref = format!("@{k}");
             sql.to_lowercase().contains(&param_ref.to_lowercase())
         })
-        .map(|(_, v)| v.clone())
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    let mut query = Query::new(sql);
-    for v in &bound_params {
+    let mut declarations = String::new();
+    for (i, (k, _)) in bound_params.iter().enumerate() {
+        declarations.push_str(&format!("DECLARE @{} NVARCHAR(MAX) = @p{};\n", k, i + 1));
+    }
+
+    let final_sql = if _is_stored_proc {
+        // If it's a stored procedure, we might just want to construct an EXEC statement
+        // but currently UI filters params by text, so bound_params is likely empty anyway.
+        // We will just do EXEC sql @p1, @p2...
+        let mut exec_stmt = format!("EXEC {} ", sql);
+        let args: Vec<String> = (0..bound_params.len()).map(|i| format!("@p{}", i + 1)).collect();
+        exec_stmt.push_str(&args.join(", "));
+        exec_stmt
+    } else {
+        format!("{}\n{}", declarations, sql)
+    };
+
+    let mut query = Query::new(final_sql);
+    for (_, v) in &bound_params {
         query.bind(v.as_str());
     }
 

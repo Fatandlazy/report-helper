@@ -24,8 +24,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Allow text selection inside inputs */
-input, textarea, pre, code {
+/* Allow text selection inside inputs and tables */
+input, textarea, pre, code, td, th {
   user-select: text;
   font-family: inherit;
 }

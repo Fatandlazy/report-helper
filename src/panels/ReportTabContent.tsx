@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ReportTab, TabView, ReportMetadata, DataSetInfo, DbConnection, QueryResult, ReportParameter, ParameterValue, DataSourceInfo } from "../types";
 
@@ -369,6 +369,35 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const displaySql = useMemo(() => {
+    if (!selectedDs) return "";
+    const sql = selectedDs.commandText ?? "";
+    const isStoredProc = selectedDs.commandType.toLowerCase().includes("stored");
+    if (params.length === 0) return sql;
+    
+    const boundParams = params.filter(p => sql.toLowerCase().includes("@" + p.name.toLowerCase()));
+    if (boundParams.length === 0) return sql;
+
+    if (isStoredProc) {
+      const args = boundParams.map(p => `@${p.name}='${p.value.replace(/'/g, "''")}'`);
+      return `EXEC ${sql} ${args.join(", ")}`;
+    } else {
+      const declarations = boundParams.map(p => `DECLARE @${p.name} NVARCHAR(MAX) = '${p.value.replace(/'/g, "''")}';`).join("\n");
+      return declarations + "\n\n" + sql;
+    }
+  }, [selectedDs, params]);
+
+  const handleCopySql = async () => {
+    try {
+      await navigator.clipboard.writeText(displaySql);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      console.error("Failed to copy SQL", e);
+    }
+  };
 
   useEffect(() => {
     if (selectedDs) buildParams(selectedDs);
@@ -392,7 +421,14 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
     setError(null);
     try {
       const paramMap: Record<string, string> = {};
-      params.forEach(p => { paramMap[p.name] = p.value; });
+      params.forEach(p => { 
+        let val = p.value;
+        if (p.dataType === "Boolean") {
+          if (val.toLowerCase() === "true") val = "1";
+          else if (val.toLowerCase() === "false") val = "0";
+        }
+        paramMap[p.name] = val; 
+      });
       const res = await invoke<QueryResult>("run_sql", {
         sql: selectedDs.commandText,
         connectionString: conn.connectionString,
@@ -471,16 +507,30 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
       {/* SQL + Results */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {selectedDs && (
-          <pre style={{
-            flexShrink: 0, maxHeight: 160,
-            margin: 0, padding: "8px 14px", overflowY: "auto",
-            fontSize: 12, lineHeight: 1.6,
-            fontFamily: "'Cascadia Code','Fira Code','Consolas',monospace",
-            color: "#1e1e1e", background: "#fafafa",
-            borderBottom: "1px solid #e8e8e8", whiteSpace: "pre-wrap",
-          }}>
-            {selectedDs.commandText}
-          </pre>
+          <div style={{ position: "relative", flexShrink: 0, borderBottom: "1px solid #e8e8e8" }}>
+            <pre style={{
+              margin: 0, padding: "8px 14px", overflowY: "auto", maxHeight: 160,
+              fontSize: 12, lineHeight: 1.6,
+              fontFamily: "'Cascadia Code','Fira Code','Consolas',monospace",
+              color: "#1e1e1e", background: "#fafafa", whiteSpace: "pre-wrap",
+            }}>
+              {displaySql}
+            </pre>
+            <button
+              onClick={handleCopySql}
+              title="Copy SQL"
+              style={{
+                position: "absolute", top: 8, right: 14,
+                padding: 4, background: "transparent", color: copied ? "#28a745" : "#888",
+                border: "none", cursor: "pointer", borderRadius: 3, display: "flex", alignItems: "center",
+                transition: "color 0.2s, background 0.2s"
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.06)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              <span className={`codicon ${copied ? "codicon-check" : "codicon-copy"}`} style={{ fontSize: 14 }} />
+            </button>
+          </div>
         )}
 
         {error && (
@@ -528,6 +578,7 @@ function ParameterInput({
   metadata,
   connections,
   activeConnectionId,
+  allParams,
 }: { 
   p: ReportParameter; 
   value: string; 
@@ -535,22 +586,36 @@ function ParameterInput({
   metadata: ReportMetadata | null;
   connections: DbConnection[];
   activeConnectionId: string;
+  allParams: Record<string, string>;
 }) {
   const [loading, setLoading] = useState(false);
   const [dynamicValues, setDynamicValues] = useState<ParameterValue[]>([]);
 
+  const ref = p.availableValues?.dataSetReference;
+  const ds = ref && metadata ? metadata.dataSets.find((d: DataSetInfo) => d.name === ref.dataSetName) : null;
+  
+  // Extract only the params that this dataset's query actually uses
+  const relevantParams: Record<string, string> = {};
+  if (ds && ds.commandText) {
+    const sqlLower = ds.commandText.toLowerCase();
+    for (const key of Object.keys(allParams)) {
+      if (sqlLower.includes(`@${key.toLowerCase()}`)) {
+        relevantParams[key] = allParams[key];
+      }
+    }
+  }
+  const relevantParamsKey = JSON.stringify(relevantParams);
+
   useEffect(() => {
-    if (p.availableValues?.dataSetReference && metadata && activeConnectionId) {
-      const ref = p.availableValues.dataSetReference;
-      const ds = metadata.dataSets.find((d: DataSetInfo) => d.name === ref.dataSetName);
+    if (ref && ds && activeConnectionId) {
       const conn = connections.find(c => c.id === activeConnectionId);
       
-      if (ds && conn) {
+      if (conn) {
         setLoading(true);
         invoke<QueryResult>("run_sql", {
           sql: ds.commandText,
           connectionString: conn.connectionString,
-          params: {}, // Available values queries shouldn't depend on other params for now (simplicity)
+          params: relevantParams,
           isStoredProc: ds.commandType.toLowerCase().includes("stored"),
         }).then(res => {
           const list = res.rows.map(row => ({
@@ -558,10 +623,13 @@ function ParameterInput({
             value: String(row[ref.valueField] ?? ""),
           }));
           setDynamicValues(list);
+        }).catch(err => {
+          console.error("Failed to fetch dynamic values for parameter", p.name, err);
+          setDynamicValues([]);
         }).finally(() => setLoading(false));
       }
     }
-  }, [p.availableValues?.dataSetReference?.dataSetName, activeConnectionId]);
+  }, [ref?.dataSetName, activeConnectionId, relevantParamsKey]);
 
   const hasAvailable = p.availableValues && (p.availableValues.staticValues.length > 0 || p.availableValues.dataSetReference);
   const options = p.availableValues?.staticValues || dynamicValues;
@@ -594,11 +662,14 @@ function ParameterInput({
           padding: "4px 8px", background: "#eee", borderRadius: 4,
           cursor: "pointer", width: "fit-content"
         }}
-        onClick={() => onChange(value.toLowerCase() === "true" ? "false" : "true")}
+        onClick={() => {
+          const isTrue = value.toLowerCase() === "true" || value === "1";
+          onChange(isTrue ? "0" : "1");
+        }}
       >
-        <span className={`codicon ${value.toLowerCase() === "true" ? "codicon-check" : "codicon-chrome-close"}`} 
-              style={{ fontSize: 14, color: value.toLowerCase() === "true" ? "#28a745" : "#dc3545" }} />
-        <span style={{ fontSize: 12, fontWeight: 500 }}>{value.toLowerCase() === "true" ? "True" : "False"}</span>
+        <span className={`codicon ${value.toLowerCase() === "true" || value === "1" ? "codicon-check" : "codicon-chrome-close"}`} 
+              style={{ fontSize: 14, color: (value.toLowerCase() === "true" || value === "1") ? "#28a745" : "#dc3545" }} />
+        <span style={{ fontSize: 12, fontWeight: 500 }}>{(value.toLowerCase() === "true" || value === "1") ? "True" : "False"}</span>
       </div>
     );
   }
@@ -866,6 +937,7 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
                     metadata={metadata}
                     connections={connections}
                     activeConnectionId={activeConnectionId}
+                    allParams={params}
                   />
 
                   {showMetadata && (
