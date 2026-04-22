@@ -2,7 +2,7 @@ import { useState } from "react";
 import "./index.css";
 import { useSettings } from "./hooks/useSettings";
 import { useTabs } from "./hooks/useTabs";
-import { TabView } from "./types";
+import { TabView, TreeNode, Section } from "./types";
 import { ActivityBar } from "./components/ActivityBar";
 import { TitleBar } from "./components/TitleBar";
 import { StatusBar } from "./components/StatusBar";
@@ -17,11 +17,13 @@ export default function App() {
     settings, setSection, updateSettings,
     addWorkspaceFolder, removeWorkspaceFolder,
     addConnection, removeConnection, updateConnection,
+    toggleHiddenSsrsPath,
   } = useSettings();
 
   const { tabs, activeId, activeTab, openTab, closeTab, closeTabsByPath, setTabView, setActiveId } = useTabs();
   const [status, setStatus] = useState({ left: "", right: "" });
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [ssrsTree, setSsrsTree] = useState<TreeNode[]>([]);
 
   function handleSectionChange(newSection: Section) {
     if (newSection === settings.lastSection) {
@@ -86,6 +88,10 @@ export default function App() {
                 initialUrl={settings.ssrsUrl}
                 initialUser={settings.ssrsUsername}
                 initialPass={settings.ssrsPassword}
+                ssrsTree={ssrsTree}
+                setSsrsTree={setSsrsTree}
+                hiddenSsrsPaths={settings.hiddenSsrsPaths}
+                onToggleHiddenPath={toggleHiddenSsrsPath}
                 onCredentialsSaved={(url, user, pass) => updateSettings({ ssrsUrl: url, ssrsUsername: user, ssrsPassword: pass })}
                 onOpenTab={handleOpenServerTab}
                 onStatus={onStatus}

@@ -37,6 +37,7 @@ export interface AppSettings {
   ssrsPassword: string;
   lastSection: Section;
   activeConnectionId: string;
+  hiddenSsrsPaths: string[];
 }
 
 export interface QueryParameter {

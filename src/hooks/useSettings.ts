@@ -11,6 +11,7 @@ const defaultSettings: AppSettings = {
   ssrsPassword: "",
   lastSection: "explorer",
   activeConnectionId: "",
+  hiddenSsrsPaths: [],
 };
 
 function load(): AppSettings {
@@ -72,6 +73,15 @@ export function useSettings() {
     setSettings(prev => ({ ...prev, lastSection: section }));
   }
 
+  function toggleHiddenSsrsPath(path: string) {
+    setSettings(prev => ({
+      ...prev,
+      hiddenSsrsPaths: prev.hiddenSsrsPaths.includes(path)
+        ? prev.hiddenSsrsPaths.filter(p => p !== path)
+        : [...prev.hiddenSsrsPaths, path],
+    }));
+  }
+
   return {
     settings,
     updateSettings,
@@ -81,5 +91,6 @@ export function useSettings() {
     removeConnection,
     updateConnection,
     setSection,
+    toggleHiddenSsrsPath,
   };
 }

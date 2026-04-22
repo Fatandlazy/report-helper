@@ -178,12 +178,6 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
     closeForm();
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-      e.preventDefault();
-      handleRun();
-    }
-  }
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden", background: "#fff" }}>
@@ -342,7 +336,7 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
 
               // Register SQL suggestions
               completionProviderRef.current = monaco.languages.registerCompletionItemProvider("sql", {
-                provideCompletionItems: (model, position) => {
+                provideCompletionItems: (_model: any, _position: any) => {
                   const suggestions: any[] = [
                     ...schemaRef.current.tables.map(t => ({
                       label: t,
