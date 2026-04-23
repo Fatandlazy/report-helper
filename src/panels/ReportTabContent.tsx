@@ -194,9 +194,23 @@ function OverviewView({ metadata, connections, activeConnectionId, onStatus }: {
                 </span>
                 <span style={{ color: "#888", width: 80, flexShrink: 0 }}>{p.dataType}</span>
                 <span style={{ color: "#555", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.prompt}</span>
+                
+                <div style={{ display: "flex", gap: 6, marginLeft: 12, flexShrink: 0 }}>
+                  {p.multiValue && <Badge label="Multi" color="#6b40bf" icon="codicon-layers" />}
+                  {p.nullable && <Badge label="Null" color="#007acc" icon="codicon-question" />}
+                  {p.allowBlank && <Badge label="Blank" color="#007acc" icon="codicon-empty-window" />}
+                  {p.hidden && <Badge label="Hidden" color="#666" icon="codicon-eye-closed" />}
+                </div>
+
                 {p.defaultValue && (
                   <span style={{ fontFamily: "monospace", color: "#aaa", flexShrink: 0, marginLeft: 12 }}>
                     = {p.defaultValue}
+                  </span>
+                )}
+                {p.defaultValueQuery && (
+                  <span style={{ fontSize: 11, color: "#aaa", flexShrink: 0, marginLeft: 12, display: "flex", alignItems: "center", gap: 3 }}>
+                    <span className="codicon codicon-database" style={{ fontSize: 10 }} />
+                    {p.defaultValueQuery.dataSetName}
                   </span>
                 )}
               </div>
@@ -204,6 +218,20 @@ function OverviewView({ metadata, connections, activeConnectionId, onStatus }: {
           </div>
         </SectionBlock>
       )}
+    </div>
+  );
+}
+
+function Badge({ label, color, icon }: { label: string; color: string; icon: string }) {
+  return (
+    <div style={{ 
+      display: "flex", alignItems: "center", gap: 3, 
+      padding: "1px 6px", borderRadius: 10, background: color + "15", 
+      color: color, border: `1px solid ${color}30`, fontSize: 9, fontWeight: 600,
+      textTransform: "uppercase", letterSpacing: "0.02em"
+    }}>
+      <span className={`codicon ${icon}`} style={{ fontSize: 9 }} />
+      {label}
     </div>
   );
 }
@@ -343,7 +371,7 @@ function DatasetCard({ dataset, connections, activeConnectionId, onStatus }: {
 
 /* ─── SQL Tester ────────────────────────────────────────────────────────── */
 
-interface ParamValue { name: string; prompt: string; dataType: string; value: string; }
+interface ParamValue { name: string; prompt: string; dataType: string; value: string | null; nullable?: boolean; hidden?: boolean; }
 
 function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: {
   metadata: ReportMetadata;
@@ -362,6 +390,7 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
   const [editorHeight, setEditorHeight] = useState(160);
   const [isResizing, setIsResizing] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [sqlMode, setSqlMode] = useState<"formatted" | "raw">("formatted");
 
   const startResizing = (e: React.MouseEvent) => {
     setIsResizing(true);
@@ -390,6 +419,8 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
   const displaySql = useMemo(() => {
     if (!selectedDs) return "";
     const sql = selectedDs.commandText ?? "";
+    if (sqlMode === "raw") return sql;
+    
     const isStoredProc = selectedDs.commandType.toLowerCase().includes("stored");
     if (params.length === 0) return sql;
     
@@ -397,13 +428,19 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
     if (boundParams.length === 0) return sql;
 
     if (isStoredProc) {
-      const args = boundParams.map(p => `@${p.name}='${p.value.replace(/'/g, "''")}'`);
+      const args = boundParams.map(p => {
+        if (p.value === null) return `@${p.name}=NULL`;
+        return `@${p.name}='${p.value.replace(/'/g, "''")}'`;
+      });
       return `EXEC ${sql} ${args.join(", ")}`;
     } else {
-      const declarations = boundParams.map(p => `DECLARE @${p.name} NVARCHAR(MAX) = '${p.value.replace(/'/g, "''")}';`).join("\n");
+      const declarations = boundParams.map(p => {
+        const valStr = p.value === null ? "NULL" : `'${p.value.replace(/'/g, "''")}'`;
+        return `DECLARE @${p.name} NVARCHAR(MAX) = ${valStr};`;
+      }).join("\n");
       return declarations + "\n\n" + sql;
     }
-  }, [selectedDs, params]);
+  }, [selectedDs, params, sqlMode]);
 
   const handleCopySql = async () => {
     try {
@@ -436,7 +473,14 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
         sql.toLowerCase().includes("@" + p.name.toLowerCase())
       );
     }
-    setParams(relevant.map(p => ({ name: p.name, prompt: p.prompt, dataType: p.dataType, value: p.defaultValue ?? "" })));
+    setParams(relevant.map(p => ({ 
+      name: p.name, 
+      prompt: p.prompt, 
+      dataType: p.dataType, 
+      value: p.defaultValue ?? (p.nullable ? null : ""),
+      nullable: p.nullable,
+      hidden: p.hidden
+    })));
     setResult(null);
     setError(null);
   }
@@ -448,10 +492,10 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
     setRunning(true);
     setError(null);
     try {
-      const paramMap: Record<string, string> = {};
+      const paramMap: Record<string, string | null> = {};
       params.forEach(p => { 
         let val = p.value;
-        if (p.dataType === "Boolean") {
+        if (val !== null && p.dataType === "Boolean") {
           if (val.toLowerCase() === "true") val = "1";
           else if (val.toLowerCase() === "false") val = "0";
         }
@@ -509,31 +553,20 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {params.map(p => (
                 <div key={p.name}>
-                  <div style={{ fontSize: 12, fontFamily: "monospace", color: "#0000cc", marginBottom: 3 }}>@{p.name}</div>
-                  {p.dataType === "Boolean" ? (
-                    <div 
-                      style={{ 
-                        display: "flex", alignItems: "center", gap: 8, 
-                        padding: "4px 8px", background: "#eee", borderRadius: 4,
-                        cursor: "pointer", width: "fit-content"
-                      }}
-                      onClick={() => {
-                        const isTrue = p.value.toLowerCase() === "true" || p.value === "1";
-                        setParams(ps => ps.map(x => x.name === p.name ? { ...x, value: isTrue ? "False" : "True" } : x));
-                      }}
-                    >
-                      <span className={`codicon ${p.value.toLowerCase() === "true" || p.value === "1" ? "codicon-check" : "codicon-chrome-close"}`} 
-                            style={{ fontSize: 14, color: (p.value.toLowerCase() === "true" || p.value === "1") ? "#28a745" : "#dc3545" }} />
-                      <span style={{ fontSize: 12, fontWeight: 500 }}>{(p.value.toLowerCase() === "true" || p.value === "1") ? "True" : "False"}</span>
-                    </div>
-                  ) : (
-                    <input
-                      type={p.dataType === "Integer" || p.dataType === "Float" ? "number" : "text"}
-                      value={p.value}
-                      placeholder={p.prompt}
-                      onChange={e => setParams(ps => ps.map(x => x.name === p.name ? { ...x, value: e.target.value } : x))}
-                    />
-                  )}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                    <div style={{ fontSize: 12, fontFamily: "monospace", color: "#0000cc" }}>@{p.name}</div>
+                    {p.hidden && <span className="codicon codicon-eye-closed" style={{ fontSize: 11, color: "#999" }} title="Hidden" />}
+                  </div>
+                  
+                  <ParameterInput 
+                    p={p as any} 
+                    value={p.value} 
+                    onChange={val => setParams(ps => ps.map(x => x.name === p.name ? { ...x, value: val } : x))}
+                    metadata={metadata}
+                    connections={connections}
+                    activeConnectionId={connId}
+                    allParams={Object.fromEntries(params.map(x => [x.name, x.value ?? ""]))}
+                  />
                 </div>
               ))}
             </div>
@@ -566,8 +599,35 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
             }}
           >
             <span className={`codicon ${sidebarVisible ? "codicon-layout-sidebar-left" : "codicon-layout-sidebar-left-off"}`} />
-            {sidebarVisible ? "Hide Sidebar" : "Show Sidebar"}
+            {sidebarVisible ? "Hide Params" : "Show Params"}
           </button>
+
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", background: "#eee", padding: 2, borderRadius: 4 }}>
+            <button
+              onClick={() => setSqlMode("formatted")}
+              style={{
+                padding: "2px 8px", fontSize: 10, borderRadius: 3, border: "none", cursor: "pointer",
+                background: sqlMode === "formatted" ? "#fff" : "transparent",
+                color: sqlMode === "formatted" ? "#333" : "#666",
+                fontWeight: sqlMode === "formatted" ? 600 : 400,
+                boxShadow: sqlMode === "formatted" ? "0 1px 2px rgba(0,0,0,0.1)" : "none",
+              }}
+            >
+              Formatted
+            </button>
+            <button
+              onClick={() => setSqlMode("raw")}
+              style={{
+                padding: "2px 8px", fontSize: 10, borderRadius: 3, border: "none", cursor: "pointer",
+                background: sqlMode === "raw" ? "#fff" : "transparent",
+                color: sqlMode === "raw" ? "#333" : "#666",
+                fontWeight: sqlMode === "raw" ? 600 : 400,
+                boxShadow: sqlMode === "raw" ? "0 1px 2px rgba(0,0,0,0.1)" : "none",
+              }}
+            >
+              Raw
+            </button>
+          </div>
         </div>
         {selectedDs && (
           <div id="sql-tester-editor-container" style={{ position: "relative", flexShrink: 0, borderBottom: "1px solid #e8e8e8" }}>
@@ -668,21 +728,22 @@ function ParameterInput({
   allParams,
 }: { 
   p: ReportParameter; 
-  value: string; 
-  onChange: (val: string) => void;
+  value: string | null; 
+  onChange: (val: string | null) => void;
   metadata: ReportMetadata | null;
   connections: DbConnection[];
   activeConnectionId: string;
-  allParams: Record<string, string>;
+  allParams: Record<string, string | null>;
 }) {
   const [loading, setLoading] = useState(false);
   const [dynamicValues, setDynamicValues] = useState<ParameterValue[]>([]);
 
+  const isNull = value === null;
   const ref = p.availableValues?.dataSetReference;
   const ds = ref && metadata ? metadata.dataSets.find((d: DataSetInfo) => d.name.toLowerCase() === ref.dataSetName.toLowerCase()) : null;
   
   // Extract only the params that this dataset's query actually uses
-  const relevantParams: Record<string, string> = {};
+  const relevantParams: Record<string, string | null> = {};
   if (ds) {
     if (ds.queryParameters && ds.queryParameters.length > 0) {
       // Use exact mapping from RDL
@@ -751,54 +812,80 @@ function ParameterInput({
     ? p.availableValues.staticValues 
     : dynamicValues;
 
-  if (hasAvailable) {
-    return (
-      <div style={{ position: "relative" }}>
-        <select 
-          value={value} 
-          onChange={e => onChange(e.target.value)}
-          disabled={loading}
-          style={{ width: "100%", fontSize: 12 }}
-        >
-          {loading && <option>Loading...</option>}
-          {!loading && options.length === 0 && <option>No values found</option>}
-          {options.map((opt: ParameterValue, i: number) => (
-            <option key={i} value={opt.value}>{opt.label || opt.value}</option>
-          ))}
-        </select>
-        {loading && <span className="codicon codicon-loading codicon-modifier-spin" style={{ position: "absolute", right: 24, top: 6, fontSize: 12, color: "#aaa" }} />}
-      </div>
-    );
-  }
+  const renderInput = () => {
+    if (hasAvailable) {
+      return (
+        <div style={{ position: "relative" }}>
+          <select 
+            value={value ?? ""} 
+            onChange={e => onChange(e.target.value === "[NULL]" ? null : e.target.value)}
+            disabled={loading || isNull}
+            style={{ width: "100%", fontSize: 12 }}
+          >
+            {loading && <option>Loading...</option>}
+            {!loading && options.length === 0 && !p.nullable && <option>No values found</option>}
+            {options.map((opt: ParameterValue, i: number) => (
+              <option key={i} value={opt.value}>{opt.label || opt.value}</option>
+            ))}
+          </select>
+          {loading && <span className="codicon codicon-loading codicon-modifier-spin" style={{ position: "absolute", right: 24, top: 6, fontSize: 12, color: "#aaa" }} />}
+        </div>
+      );
+    }
 
-  if (p.dataType === "Boolean") {
+    if (p.dataType === "Boolean") {
+      return (
+        <div 
+          style={{ 
+            display: "flex", alignItems: "center", gap: 8, 
+            padding: "4px 8px", background: isNull ? "#f5f5f5" : "#eee", borderRadius: 4,
+            cursor: isNull ? "default" : "pointer", width: "fit-content",
+            opacity: isNull ? 0.6 : 1
+          }}
+          onClick={() => {
+            if (isNull) return;
+            const isTrue = (value || "").toLowerCase() === "true" || value === "1";
+            onChange(isTrue ? "False" : "True");
+          }}
+        >
+          <span className={`codicon ${(value || "").toLowerCase() === "true" || value === "1" ? "codicon-check" : "codicon-chrome-close"}`} 
+                style={{ fontSize: 14, color: ((value || "").toLowerCase() === "true" || value === "1") ? "#28a745" : "#dc3545" }} />
+          <span style={{ fontSize: 12, fontWeight: 500 }}>{((value || "").toLowerCase() === "true" || value === "1") ? "True" : "False"}</span>
+        </div>
+      );
+    }
+
     return (
-      <div 
-        style={{ 
-          display: "flex", alignItems: "center", gap: 8, 
-          padding: "4px 8px", background: "#eee", borderRadius: 4,
-          cursor: "pointer", width: "fit-content"
-        }}
-        onClick={() => {
-          const isTrue = value.toLowerCase() === "true" || value === "1";
-          onChange(isTrue ? "False" : "True");
-        }}
-      >
-        <span className={`codicon ${value.toLowerCase() === "true" || value === "1" ? "codicon-check" : "codicon-chrome-close"}`} 
-              style={{ fontSize: 14, color: (value.toLowerCase() === "true" || value === "1") ? "#28a745" : "#dc3545" }} />
-        <span style={{ fontSize: 12, fontWeight: 500 }}>{(value.toLowerCase() === "true" || value === "1") ? "True" : "False"}</span>
-      </div>
+      <input
+        type={p.dataType === "Integer" || p.dataType === "Float" ? "number" : "text"}
+        value={value ?? ""}
+        placeholder={isNull ? "NULL" : p.dataType}
+        disabled={isNull}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: "100%", fontSize: 12, opacity: isNull ? 0.6 : 1 }}
+      />
     );
-  }
+  };
 
   return (
-    <input
-      type={p.dataType === "Integer" || p.dataType === "Float" ? "number" : "text"}
-      value={value}
-      placeholder={p.dataType}
-      onChange={e => onChange(e.target.value)}
-      style={{ width: "100%", fontSize: 12 }}
-    />
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ flex: 1 }}>{renderInput()}</div>
+      {p.nullable && (
+        <label style={{ 
+          display: "flex", alignItems: "center", gap: 4, fontSize: 11, 
+          color: isNull ? "#007fd4" : "#888", cursor: "pointer", whiteSpace: "nowrap",
+          userSelect: "none"
+        }}>
+          <input 
+            type="checkbox" 
+            checked={isNull} 
+            onChange={e => onChange(e.target.checked ? null : (p.defaultValue ?? ""))}
+            style={{ margin: 0, cursor: "pointer" }}
+          />
+          Null
+        </label>
+      )}
+    </div>
   );
 }
 
@@ -819,13 +906,13 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
   const tempReportId = useRef<string | null>(null);
 
   // Parameter state
-  const [params, setParams] = useState<Record<string, string>>({});
+  const [params, setParams] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     if (metadata?.parameters) {
-      const initial: Record<string, string> = {};
+      const initial: Record<string, string | null> = {};
       metadata.parameters.forEach((p: ReportParameter) => {
-        initial[p.name] = p.defaultValue ?? "";
+        initial[p.name] = p.defaultValue ?? (p.nullable ? null : "");
       });
       setParams(initial);
     }
@@ -879,11 +966,16 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
     const report = await ensureUploaded();
     if (!report) return;
     try {
-      // Omit empty parameters to let SSRS use default values
-      const processedParams: Record<string, string> = {};
+      // Omit empty parameters to let SSRS use default values, 
+      // but explicitly handle NULL for nullable parameters.
+      const processedParams: Record<string, string | null> = {};
       Object.keys(params).forEach(key => {
         const val = params[key];
-        if (val !== undefined && val !== null && val.trim() !== "") {
+        const pDef = metadata?.parameters.find(x => x.name === key);
+        
+        if (val === null) {
+          processedParams[key] = null;
+        } else if (val.trim() !== "") {
           processedParams[key] = val;
         }
       });
@@ -1049,7 +1141,7 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
 
                   <ParameterInput 
                     p={p} 
-                    value={params[p.name] || ""} 
+                    value={params[p.name] as any} 
                     onChange={val => setParams(prev => ({ ...prev, [p.name]: val }))}
                     metadata={metadata}
                     connections={connections}

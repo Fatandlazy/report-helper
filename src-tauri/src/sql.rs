@@ -16,7 +16,7 @@ pub struct QueryResult {
 pub async fn run_sql(
     sql: &str,
     connection_string: &str,
-    params: HashMap<String, String>,
+    params: HashMap<String, Option<String>>,
     _is_stored_proc: bool,
 ) -> Result<QueryResult, String> {
     let start = std::time::Instant::now();
@@ -33,7 +33,7 @@ pub async fn run_sql(
         .await
         .map_err(|e| format!("SQL connect failed: {e}"))?;
 
-    let bound_params: Vec<(String, String)> = params
+    let bound_params: Vec<(String, Option<String>)> = params
         .iter()
         .filter(|(k, _)| {
             let param_ref = format!("@{k}");
@@ -61,7 +61,10 @@ pub async fn run_sql(
 
     let mut query = Query::new(final_sql);
     for (_, v) in &bound_params {
-        query.bind(v.as_str());
+        match v {
+            Some(s) => query.bind(s.as_str()),
+            None => query.bind(Option::<&str>::None),
+        }
     }
 
     let stream = query

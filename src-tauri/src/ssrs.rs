@@ -140,7 +140,7 @@ pub async fn download_rdl(
     Ok(tmp.to_string_lossy().to_string())
 }
 
-pub fn preview_url(server_url: &str, report_path: &str, params: &HashMap<String, String>) -> String {
+pub fn preview_url(server_url: &str, report_path: &str, params: &HashMap<String, Option<String>>) -> String {
     let base = report_server_base(server_url);
     let path = if report_path.starts_with('/') { report_path } else { &format!("/{report_path}") };
     
@@ -150,13 +150,16 @@ pub fn preview_url(server_url: &str, report_path: &str, params: &HashMap<String,
     let mut url = format!("{base}?{encoded_path}&rs:Command=Render");
     
     for (k, v) in params {
-        if v == "[NULL]" {
-            url.push_str(&format!("&{}:IsNull=true", urlencoding::encode(k)));
-        } else {
-            url.push_str(&format!("&{}={}", 
-                urlencoding::encode(k), 
-                urlencoding::encode(v)
-            ));
+        match v {
+            Some(s) => {
+                url.push_str(&format!("&{}={}", 
+                    urlencoding::encode(k), 
+                    urlencoding::encode(s)
+                ));
+            }
+            None => {
+                url.push_str(&format!("&{}:IsNull=true", urlencoding::encode(k)));
+            }
         }
     }
     
@@ -229,7 +232,7 @@ pub async fn render_format(
     password: &str,
     report_path: &str,
     format: &str,
-    params: &HashMap<String, String>,
+    params: &HashMap<String, Option<String>>,
 ) -> Result<Vec<u8>, String> {
     let client = make_client(username, password)?;
     let base = report_server_base(url);
@@ -237,10 +240,17 @@ pub async fn render_format(
     let mut render_url = format!("{base}?{path}&rs:Command=Render&rs:Format={format}");
 
     for (k, v) in params {
-        render_url.push_str(&format!("&{}={}", 
-            urlencoding::encode(k), 
-            urlencoding::encode(v)
-        ));
+        match v {
+            Some(s) => {
+                render_url.push_str(&format!("&{}={}", 
+                    urlencoding::encode(k), 
+                    urlencoding::encode(s)
+                ));
+            }
+            None => {
+                render_url.push_str(&format!("&{}:IsNull=true", urlencoding::encode(k)));
+            }
+        }
     }
 
     let resp = client

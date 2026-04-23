@@ -51,6 +51,9 @@ pub struct ReportParameter {
     pub available_values: Option<AvailableValues>,
     pub multi_value: bool,
     pub nullable: bool,
+    pub allow_blank: bool,
+    pub hidden: bool,
+    pub default_value_query: Option<DataSetReference>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -176,6 +179,16 @@ pub fn parse_rdl(path: &str) -> Result<ReportMetadata, String> {
                             p.nullable = cur_text.trim().to_lowercase() == "true";
                         }
                     }
+                    "AllowBlank" => {
+                        if let Some(p) = &mut cur_param {
+                            p.allow_blank = cur_text.trim().to_lowercase() == "true";
+                        }
+                    }
+                    "Hidden" => {
+                        if let Some(p) = &mut cur_param {
+                            p.hidden = cur_text.trim().to_lowercase() == "true";
+                        }
+                    }
                     "DefaultValue" | "Value" => {
                         if depth_path.contains("ReportParameter/DefaultValue") {
                             if let Some(p) = &mut cur_param {
@@ -203,8 +216,10 @@ pub fn parse_rdl(path: &str) -> Result<ReportMetadata, String> {
                     "ParameterValue" => {
                         if let Some(v) = cur_param_value.take() {
                             if let Some(p) = &mut cur_param {
-                                let av = p.available_values.get_or_insert_with(AvailableValues::default);
-                                av.static_values.push(v);
+                                if depth_path.contains("AvailableValues") || depth_path.contains("ValidValues") {
+                                    let av = p.available_values.get_or_insert_with(AvailableValues::default);
+                                    av.static_values.push(v);
+                                }
                             }
                         }
                     }
@@ -226,8 +241,12 @@ pub fn parse_rdl(path: &str) -> Result<ReportMetadata, String> {
                     "DataSetReference" => {
                         if let Some(ds_ref) = cur_ds_ref.take() {
                             if let Some(p) = &mut cur_param {
-                                let av = p.available_values.get_or_insert_with(AvailableValues::default);
-                                av.data_set_reference = Some(ds_ref);
+                                if depth_path.contains("AvailableValues") || depth_path.contains("ValidValues") {
+                                    let av = p.available_values.get_or_insert_with(AvailableValues::default);
+                                    av.data_set_reference = Some(ds_ref);
+                                } else if depth_path.contains("DefaultValue") {
+                                    p.default_value_query = Some(ds_ref);
+                                }
                             }
                         }
                     }

@@ -88,6 +88,9 @@ export interface ReportParameter {
   availableValues?: AvailableValues;
   multiValue?: boolean;
   nullable?: boolean;
+  allowBlank?: boolean;
+  hidden?: boolean;
+  defaultValueQuery?: DataSetReference;
 }
 
 export interface CatalogItem {

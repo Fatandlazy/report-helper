@@ -19,7 +19,7 @@ async fn parse_rdl(path: String) -> Result<ReportMetadata, String> {
 async fn run_sql(
     sql: String,
     connection_string: String,
-    params: HashMap<String, String>,
+    params: HashMap<String, Option<String>>,
     is_stored_proc: bool,
 ) -> Result<QueryResult, String> {
     sql::run_sql(&sql, &connection_string, params, is_stored_proc).await
@@ -39,7 +39,7 @@ async fn ssrs_download_rdl(
 }
 
 #[tauri::command]
-fn ssrs_preview_url(url: String, report_path: String, params: HashMap<String, String>) -> String {
+fn ssrs_preview_url(url: String, report_path: String, params: HashMap<String, Option<String>>) -> String {
     ssrs::preview_url(&url, &report_path, &params)
 }
 
@@ -67,7 +67,7 @@ async fn ssrs_export(
     password: String,
     report_path: String,
     format: String,
-    params: HashMap<String, String>,
+    params: HashMap<String, Option<String>>,
 ) -> Result<(), String> {
     let bytes = ssrs::render_format(&url, &username, &password, &report_path, &format, &params).await?;
 
