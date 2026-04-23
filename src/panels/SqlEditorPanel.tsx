@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveFileDialog, ask } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
-import { DbConnection, QueryResult, WorkspaceFolder, SAMPLE_SQL } from "../types";
+import { DbConnection, QueryResult, WorkspaceFolder, SAMPLE_SQL, ReportTab } from "../types";
 import { useCallback } from "react";
 import { useHotkeys } from "../hooks/useHotkeys";
 
@@ -15,13 +15,17 @@ interface Props {
   onStatus: (left: string, right: string) => void;
   sidebarVisible: boolean;
   defaultSafeRun: boolean;
+  onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
 }
 
 
 type FormMode = "add" | "edit" | null;
 type TestState = "idle" | "testing" | "ok" | "fail";
 
-export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection, onRemoveConnection, onUpdateConnection, onStatus, sidebarVisible, defaultSafeRun }: Props) {
+export function SqlEditorPanel({ 
+  connections, workspaceFolders, onAddConnection, onRemoveConnection, 
+  onUpdateConnection, onStatus, sidebarVisible, defaultSafeRun, onUpdateTabMetadata 
+}: Props) {
   const [connId, setConnId] = useState(connections[0]?.id ?? "");
   const [sql, setSql] = useState(SAMPLE_SQL);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
@@ -257,6 +261,7 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
       setActiveFilePath(targetPath);
       setLastModified(mtime);
       setIsSample(false);
+      onUpdateTabMetadata(targetPath, { lastModified: mtime });
       onStatus("Saved", targetPath.split(/[\\/]/).pop() || "");
       
       // Refresh folder scan if it's in a workspace

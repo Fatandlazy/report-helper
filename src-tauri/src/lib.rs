@@ -16,6 +16,13 @@ async fn parse_rdl(path: String) -> Result<ReportMetadata, String> {
 }
 
 #[tauri::command]
+async fn update_rdl_sql(path: String, dataset_name: String, new_sql: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || rdl::update_rdl_sql(&path, &dataset_name, &new_sql))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn run_sql(
     sql: String,
     connection_string: String,
@@ -264,6 +271,7 @@ pub fn run() {
             read_text_file,
             write_text_file,
             get_file_modified_time,
+            update_rdl_sql,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

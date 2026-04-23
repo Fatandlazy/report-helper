@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { TreeNode, CatalogItem } from "../types";
+import { useEffect, useRef } from "react";
 
 interface Props {
   initialUrl: string;
@@ -37,7 +39,7 @@ function buildTree(items: CatalogItem[]): TreeNode[] {
   return roots;
 }
 
-function TreeNodeView({ node, activeId, loadingIds, hiddenPaths, showHidden, depth = 0, onSelect, onOpenPreview, onToggleHidden }: {
+function TreeNodeView({ node, activeId, loadingIds, hiddenPaths, showHidden, depth = 0, onSelect, onOpenPreview, onToggleHidden, onContextMenu }: {
   node: TreeNode;
   activeId: string | null;
   loadingIds: Set<string>;
@@ -47,6 +49,7 @@ function TreeNodeView({ node, activeId, loadingIds, hiddenPaths, showHidden, dep
   onSelect: (n: TreeNode) => void;
   onOpenPreview: (n: TreeNode) => void;
   onToggleHidden: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, n: TreeNode) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const isActive = !node.isFolder && node.id === activeId;
@@ -97,6 +100,7 @@ function TreeNodeView({ node, activeId, loadingIds, hiddenPaths, showHidden, dep
             onSelect={onSelect}
             onOpenPreview={onOpenPreview}
             onToggleHidden={onToggleHidden}
+            onContextMenu={onContextMenu}
           />
         ))}
       </div>
@@ -108,6 +112,7 @@ function TreeNodeView({ node, activeId, loadingIds, hiddenPaths, showHidden, dep
       className={`tree-row ${isActive ? "active" : ""}`}
       style={{ paddingLeft: indent + 16, paddingRight: 6, gap: 6 }}
       onClick={() => !isLoading && onSelect(node)}
+      onContextMenu={(e) => onContextMenu(e, node)}
     >
       <span
         className={`codicon ${isLoading ? "codicon-loading codicon-modifier-spin" : "codicon-file"}`}
@@ -142,6 +147,43 @@ export function ServerPanel({
   const [error, setError] = useState<string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(ssrsTree.length > 0);
   const [showHidden, setShowHidden] = useState(false);
+  const [menu, setMenu] = useState<{ x: number, y: number, node: TreeNode } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = () => setMenu(null);
+    window.addEventListener("click", handleClick);
+    return () => window.removeEventListener("click", handleClick);
+  }, []);
+
+  const handleContextMenu = (e: React.MouseEvent, node: TreeNode) => {
+    if (node.isFolder) return;
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY, node });
+  };
+
+  const handleDownload = async (node: TreeNode) => {
+    setMenu(null);
+    try {
+      const selectedPath = await saveFileDialog({
+        filters: [{ name: "RDL", extensions: ["rdl"] }],
+        defaultPath: `${node.name}.rdl`
+      });
+      if (!selectedPath) return;
+
+      onStatus("SSRS", `Downloading ${node.name}...`);
+      const tmpPath = await invoke<string>("ssrs_download_rdl", {
+        url: url.trim(), username: user, password: pass,
+        reportId: node.id, reportName: node.name,
+      });
+      
+      const content = await invoke<string>("read_text_file", { path: tmpPath });
+      await invoke("write_text_file", { path: selectedPath, content });
+      onStatus("SSRS", `Downloaded to ${selectedPath.split(/[\\/]/).pop()}`);
+    } catch (e: any) {
+      alert(`Download failed: ${e}`);
+    }
+  };
 
   async function handleConnect() {
     if (!url.trim()) return;
@@ -379,9 +421,37 @@ export function ServerPanel({
             onSelect={handleSelectReport}
             onOpenPreview={handleOpenPreview}
             onToggleHidden={onToggleHiddenPath}
+            onContextMenu={handleContextMenu}
           />
         ))}
       </div>
+
+      {menu && (
+        <div 
+          ref={menuRef}
+          style={{
+            position: "fixed", top: menu.y, left: menu.x,
+            background: "#fff", border: "1px solid #ccc",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+            borderRadius: 4, padding: "4px 0", zIndex: 1000,
+            minWidth: 160,
+          }}
+        >
+          <button
+            onClick={() => handleDownload(menu.node)}
+            style={{
+              display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
+              padding: "6px 12px", border: "none", background: "transparent",
+              color: "#333", fontSize: 13, cursor: "pointer",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#0078d4"; e.currentTarget.style.color = "#fff"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#333"; }}
+          >
+            <span className="codicon codicon-cloud-download" style={{ fontSize: 14 }} />
+            Download RDL
+          </button>
+        </div>
+      )}
 
       {/* ── Hint ── */}
       {ssrsTree.length > 0 && (

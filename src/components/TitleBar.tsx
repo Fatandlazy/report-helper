@@ -51,7 +51,7 @@ export function TitleBar() {
         data-tauri-drag-region
       >
         <span className="codicon codicon-graph-scatter" style={{ color: "#cccccc", fontSize: 14 }} />
-        <span style={{ color: "#cccccc", fontSize: 12 }}>SSRS Report Manager</span>
+        <span style={{ color: "#cccccc", fontSize: 12 }}>Report Helper</span>
       </div>
 
       {/* Drag region */}
