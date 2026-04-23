@@ -24,6 +24,7 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
   const [metadata, setMetadata] = useState<ReportMetadata | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [selectedDataSetName, setSelectedDataSetName] = useState<string | null>(null);
 
   const isServerTab = tab.source === "server";
 
@@ -108,9 +109,37 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
         )}
         {!isServerTab && !loading && !metaError && metadata && (
           <>
-            {tab.activeView === "overview"  && <OverviewView  metadata={metadata} connections={connections} activeConnectionId={activeConnectionId} onStatus={onStatus} />}
-            {tab.activeView === "sqltester" && <SqlTesterView metadata={metadata} connections={connections} activeConnectionId={activeConnectionId} onStatus={onStatus} />}
-            {tab.activeView === "preview"   && <PreviewView   tab={tab} metadata={metadata} connections={connections} activeConnectionId={activeConnectionId} ssrsUrl={ssrsUrl} ssrsUsername={ssrsUsername} ssrsPassword={ssrsPassword} onStatus={onStatus} />}
+            {tab.activeView === "overview"  && (
+              <OverviewView 
+                metadata={metadata} 
+                onTestDataset={(dsName) => {
+                  setSelectedDataSetName(dsName);
+                  onViewChange("sqltester");
+                }}
+              />
+            )}
+            {tab.activeView === "sqltester" && (
+              <SqlTesterView 
+                metadata={metadata} 
+                connections={connections} 
+                activeConnectionId={activeConnectionId} 
+                onStatus={onStatus} 
+                selectedDataSetName={selectedDataSetName}
+                onSelectedDataSetNameChange={setSelectedDataSetName}
+              />
+            )}
+            {tab.activeView === "preview"   && (
+              <PreviewView   
+                tab={tab} 
+                metadata={metadata} 
+                connections={connections} 
+                activeConnectionId={activeConnectionId} 
+                ssrsUrl={ssrsUrl} 
+                ssrsUsername={ssrsUsername} 
+                ssrsPassword={ssrsPassword} 
+                onStatus={onStatus} 
+              />
+            )}
           </>
         )}
       </div>
@@ -130,11 +159,9 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 /* ─── Overview ─────────────────────────────────────────────────────────── */
 
-function OverviewView({ metadata, connections, activeConnectionId, onStatus }: {
+function OverviewView({ metadata, onTestDataset }: {
   metadata: ReportMetadata;
-  connections: DbConnection[];
-  activeConnectionId: string;
-  onStatus: (l: string, r: string) => void;
+  onTestDataset: (dsName: string) => void;
 }) {
   const empty = metadata.dataSets.length === 0 && metadata.parameters.length === 0 && metadata.dataSources.length === 0;
   return (
@@ -170,9 +197,7 @@ function OverviewView({ metadata, connections, activeConnectionId, onStatus }: {
               <DatasetCard
                 key={ds.name}
                 dataset={ds}
-                connections={connections}
-                activeConnectionId={activeConnectionId}
-                onStatus={onStatus}
+                onTest={() => onTestDataset(ds.name)}
               />
             ))}
           </div>
@@ -248,45 +273,23 @@ function SectionBlock({ title, icon, children }: { title: string; icon: string; 
   );
 }
 
-function DatasetCard({ dataset, connections, activeConnectionId, onStatus }: {
+function DatasetCard({ dataset, onTest }: {
   dataset: DataSetInfo;
-  connections: DbConnection[];
-  activeConnectionId: string;
-  onStatus: (l: string, r: string) => void;
+  onTest: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [connId, setConnId] = useState(activeConnectionId || connections[0]?.id || "");
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  async function handleTest(e: React.MouseEvent) {
+  const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!dataset.commandText?.trim()) return;
-    const conn = connections.find(c => c.id === connId);
-    if (!conn) return;
-    setTesting(true);
-    setExpanded(true);
-    setRunning(true);
-    setError(null);
-    setResult(null);
     try {
-      const res = await invoke<QueryResult>("run_sql", {
-        sql: dataset.commandText,
-        connectionString: conn.connectionString,
-        params: {},
-        isStoredProc: dataset.commandType.toLowerCase().includes("stored"),
-      });
-      setResult(res);
-      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms`);
-    } catch (e: any) {
-      setError(String(e));
-      onStatus("", "Error");
-    } finally {
-      setRunning(false);
+      await navigator.clipboard.writeText(dataset.commandText || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy!", err);
     }
-  }
+  };
 
   return (
     <div style={{ border: "1px solid #e8e8e8", borderRadius: 3, overflow: "hidden" }}>
@@ -318,51 +321,60 @@ function DatasetCard({ dataset, connections, activeConnectionId, onStatus }: {
           style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}
           onClick={e => e.stopPropagation()}
         >
-          {connections.length > 0 && (
-            <select
-              value={connId}
-              onChange={e => setConnId(e.target.value)}
-              style={{ fontSize: 11, padding: "2px 4px", height: 22, width: 110 }}
-            >
-              {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          )}
           <button
-            onClick={handleTest}
-            disabled={running || !connId || !dataset.commandText?.trim()}
+            onClick={onTest}
+            disabled={!dataset.commandText?.trim()}
             className="btn-primary"
             style={{ fontSize: 11, padding: "2px 8px", height: 22, borderRadius: 2, gap: 4 }}
           >
-            <span className={`codicon ${running ? "codicon-loading codicon-modifier-spin" : "codicon-play"}`} style={{ fontSize: 11 }} />
-            {running ? "Running…" : "Test"}
+            <span className="codicon codicon-play" style={{ fontSize: 11 }} />
+            Test
           </button>
         </div>
       </div>
 
-      {/* Body: SQL + results */}
+      {/* Body: SQL (Monaco Editor) */}
       {expanded && (
-        <div style={{ borderTop: "1px solid #eee" }}>
-          <pre style={{
-            margin: 0, padding: "10px 14px", fontSize: 12, lineHeight: 1.6,
-            fontFamily: "'Cascadia Code','Fira Code','Consolas',monospace",
-            color: "#1e1e1e", background: "#fff",
-            overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
-            borderBottom: (testing && (result || error)) ? "1px solid #eee" : "none",
-          }}>
-            {dataset.commandText}
-          </pre>
-
-          {testing && error && (
-            <div style={{ padding: "6px 14px", fontSize: 12, color: "#c00", background: "#fff0f0" }}>
-              {error}
-            </div>
-          )}
-
-          {testing && result && (
-            <div style={{ maxHeight: 240, overflow: "auto" }}>
-              <ResultTable result={result} />
-            </div>
-          )}
+        <div style={{ borderTop: "1px solid #eee", position: "relative", height: 160 }}>
+          <Editor
+            height="100%"
+            defaultLanguage="sql"
+            value={dataset.commandText}
+            theme="vs"
+            options={{
+              readOnly: true,
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              fontSize: 12,
+              fontFamily: "'Cascadia Code','Fira Code','Consolas',monospace",
+              lineNumbers: "on",
+              folding: true,
+              wordWrap: "on",
+              automaticLayout: true,
+              padding: { top: 8, bottom: 8 },
+              scrollbar: { vertical: "auto", horizontal: "auto" }
+            }}
+          />
+          <button
+            onClick={handleCopy}
+            title="Copy SQL"
+            style={{
+              position: "absolute", top: 8, right: 14, zIndex: 10,
+              padding: 4, background: "rgba(255,255,255,0.8)", color: copied ? "#28a745" : "#888",
+              border: "1px solid #ddd", cursor: "pointer", borderRadius: 3, display: "flex", alignItems: "center",
+              transition: "color 0.2s, background 0.2s, border-color 0.2s"
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = "#fff";
+              e.currentTarget.style.borderColor = "#bbb";
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.8)";
+              e.currentTarget.style.borderColor = "#ddd";
+            }}
+          >
+            <span className={`codicon ${copied ? "codicon-check" : "codicon-copy"}`} style={{ fontSize: 14 }} />
+          </button>
         </div>
       )}
     </div>
@@ -373,14 +385,28 @@ function DatasetCard({ dataset, connections, activeConnectionId, onStatus }: {
 
 interface ParamValue { name: string; prompt: string; dataType: string; value: string | null; nullable?: boolean; hidden?: boolean; }
 
-function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: {
+function SqlTesterView({ metadata, connections, activeConnectionId, onStatus, selectedDataSetName, onSelectedDataSetNameChange }: {
   metadata: ReportMetadata;
   connections: DbConnection[];
   activeConnectionId: string;
   onStatus: (l: string, r: string) => void;
+  selectedDataSetName: string | null;
+  onSelectedDataSetNameChange: (dsName: string) => void;
 }) {
   const datasets = metadata.dataSets.filter((d: DataSetInfo) => d.commandText?.trim());
-  const [selectedDs, setSelectedDs] = useState<DataSetInfo | null>(datasets[0] ?? null);
+  const [selectedDs, setSelectedDs] = useState<DataSetInfo | null>(() => {
+    if (selectedDataSetName) {
+      return datasets.find(d => d.name === selectedDataSetName) ?? datasets[0] ?? null;
+    }
+    return datasets[0] ?? null;
+  });
+
+  useEffect(() => {
+    if (selectedDataSetName) {
+      const ds = datasets.find(d => d.name === selectedDataSetName);
+      if (ds) setSelectedDs(ds);
+    }
+  }, [selectedDataSetName, datasets]);
   const [connId, setConnId] = useState(activeConnectionId || connections[0]?.id || "");
   const [params, setParams] = useState<ParamValue[]>([]);
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -531,7 +557,7 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus }: 
           <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 4 }}>Dataset</label>
           <select
             value={selectedDs?.name ?? ""}
-            onChange={e => { const ds = datasets.find((d: DataSetInfo) => d.name === e.target.value); if (ds) setSelectedDs(ds); }}
+            onChange={e => { onSelectedDataSetNameChange(e.target.value); }}
             disabled={datasets.length === 0}
           >
             {datasets.length === 0 && <option>—</option>}
@@ -756,8 +782,10 @@ function ParameterInput({
         const allParamsKey = Object.keys(allParams).find(k => k.toLowerCase() === paramName.toLowerCase());
         if (allParamsKey) {
           let val = allParams[allParamsKey];
-          if (val.toLowerCase() === "true") val = "1";
-          else if (val.toLowerCase() === "false") val = "0";
+          if (val) {
+            if (val.toLowerCase() === "true") val = "1";
+            else if (val.toLowerCase() === "false") val = "0";
+          }
           relevantParams[qp.name.replace('@', '')] = val;
         }
       });
@@ -767,8 +795,10 @@ function ParameterInput({
       for (const key of Object.keys(allParams)) {
         if (sqlLower.includes(`@${key.toLowerCase()}`)) {
           let val = allParams[key];
-          if (val.toLowerCase() === "true") val = "1";
-          else if (val.toLowerCase() === "false") val = "0";
+          if (val) {
+            if (val.toLowerCase() === "true") val = "1";
+            else if (val.toLowerCase() === "false") val = "0";
+          }
           relevantParams[key] = val;
         }
       }
@@ -971,7 +1001,6 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
       const processedParams: Record<string, string | null> = {};
       Object.keys(params).forEach(key => {
         const val = params[key];
-        const pDef = metadata?.parameters.find(x => x.name === key);
         
         if (val === null) {
           processedParams[key] = null;

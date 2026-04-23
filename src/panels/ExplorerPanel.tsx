@@ -440,15 +440,6 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
         <span className="section-label">Explorer</span>
         <div style={{ display: "flex", gap: 4 }}>
           <button
-            onClick={() => {
-              if (workspaceFolders.length > 0) handleAction("newFolder", workspaceFolders[0].path);
-            }}
-            title="New folder in first workspace"
-            style={{ color: "#666", padding: 2, lineHeight: 1, borderRadius: 2 }}
-          >
-            <span className="codicon codicon-new-folder" style={{ fontSize: 15 }} />
-          </button>
-          <button
             onClick={async () => {
               const dir = await open({ directory: true, multiple: false });
               if (typeof dir !== "string") return;
@@ -457,9 +448,23 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
               scanFolder(dir);
             }}
             title="Add folder to workspace"
-            style={{ color: "#666", padding: 2, lineHeight: 1, borderRadius: 2 }}
+            style={{ 
+              color: "#666", padding: "2px 6px", borderRadius: 3,
+              display: "flex", alignItems: "center", gap: 4,
+              border: "1px solid transparent", cursor: "pointer",
+              transition: "all 0.1s"
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = "rgba(0,0,0,0.05)";
+              e.currentTarget.style.borderColor = "rgba(0,0,0,0.1)";
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = "transparent";
+            }}
           >
-            <span className="codicon codicon-add" style={{ fontSize: 15 }} />
+            <span className="codicon codicon-add" style={{ fontSize: 13 }} />
+            <span style={{ fontSize: 11, fontWeight: 500 }}>Add Folder</span>
           </button>
         </div>
       </div>
