@@ -102,19 +102,37 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onCloseOthers, onClo
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: isActive ? "#666" : "transparent",
+                color: isActive ? "#666" : (tab.isDirty ? "#888" : "transparent"),
                 flexShrink: 0,
               }}
               onMouseEnter={e => {
                 e.currentTarget.style.color = "#333";
                 e.currentTarget.style.background = "rgba(0,0,0,0.12)";
+                const icon = e.currentTarget.querySelector(".codicon");
+                if (icon) {
+                  icon.classList.remove("codicon-circle-filled");
+                  icon.classList.add("codicon-close");
+                }
               }}
               onMouseLeave={e => {
-                e.currentTarget.style.color = isActive ? "#666" : "transparent";
+                e.currentTarget.style.color = isActive ? "#666" : (tab.isDirty ? "#888" : "transparent");
                 e.currentTarget.style.background = "none";
+                const icon = e.currentTarget.querySelector(".codicon");
+                if (icon) {
+                  if (tab.isDirty) {
+                    icon.classList.remove("codicon-close");
+                    icon.classList.add("codicon-circle-filled");
+                  } else {
+                    icon.classList.remove("codicon-circle-filled");
+                    icon.classList.add("codicon-close");
+                  }
+                }
               }}
             >
-              <span className="codicon codicon-close" style={{ fontSize: 12, pointerEvents: "none" }} />
+              <span 
+                className={`codicon ${tab.isDirty ? "codicon-circle-filled" : "codicon-close"}`} 
+                style={{ fontSize: tab.isDirty ? 10 : 12, pointerEvents: "none" }} 
+              />
             </button>
           </div>
         );

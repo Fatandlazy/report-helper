@@ -15,6 +15,7 @@ interface Props {
   onViewChange: (view: TabView) => void;
   onStatus: (left: string, right: string) => void;
   defaultSafeRun: boolean;
+  onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
 }
 
 const VIEWS: { id: TabView; label: string; icon: string }[] = [
@@ -23,11 +24,15 @@ const VIEWS: { id: TabView; label: string; icon: string }[] = [
   { id: "preview",   label: "Preview",    icon: "codicon-eye" },
 ];
 
-export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl, ssrsUsername, ssrsPassword, onViewChange, onStatus, defaultSafeRun }: Props) {
+export function ReportTabContent({ 
+  tab, connections, activeConnectionId, ssrsUrl, ssrsUsername, ssrsPassword, 
+  onViewChange, onStatus, defaultSafeRun, onUpdateTabMetadata 
+}: Props) {
   const [metadata, setMetadata] = useState<ReportMetadata | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedDataSetName, setSelectedDataSetName] = useState<string | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
 
   const isServerTab = tab.source === "server";
 
@@ -53,6 +58,18 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
       .catch(e => { setMetaError(String(e)); setLoading(false); });
   }, [tab.path]);
 
+  const refreshMetadata = async () => {
+    setLoading(true);
+    try {
+      const m = await invoke<ReportMetadata>("parse_rdl", { path: tab.path });
+      setMetadata(m);
+    } catch (e) {
+      setMetaError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const ext = tab.path.split(".").pop()?.toLowerCase();
   const isSqlFile = ext === "sql";
 
@@ -75,13 +92,13 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
         <div style={{ display: "flex", alignItems: "center", gap: 2, flex: 1 }}>
           {visibleViews.map(btn => {
             const isActive = tab.activeView === btn.id;
-            const isDisabled = btn.id === "preview" && !isServerTab;
+            const isDisabled = btn.id === "preview" && !isServerTab && !tab.serverPath;
             return (
               <button
                 key={btn.id}
                 onClick={() => !isDisabled && onViewChange(btn.id)}
                 disabled={isDisabled}
-                title={isDisabled ? "This feature is currently disabled for local" : ""}
+                title={isDisabled ? "This feature is only available for server reports or reports with a server path" : ""}
                 style={{
                   display: "flex", alignItems: "center", gap: 5,
                   padding: "4px 10px", borderRadius: 3,
@@ -109,6 +126,35 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
         
         {/* Right Portal Target (Run/Save) */}
         <div id="report-toolbar-right" style={{ display: "flex", alignItems: "center", gap: 10 }}></div>
+
+        {/* Global Edit Mode Toggle */}
+        {!isSqlFile && (
+          <div 
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              marginLeft: 10, paddingLeft: 10, borderLeft: "1px solid #e0e0e0",
+              height: 20,
+              opacity: isServerTab ? 0.5 : 1
+            }} 
+            title={isServerTab ? "Edit Mode is only available for local RDL files" : ""}
+          >
+            <label style={{ 
+              display: "flex", alignItems: "center", gap: 6, 
+              cursor: isServerTab ? "not-allowed" : "pointer", userSelect: "none" 
+            }}>
+              <input
+                type="checkbox"
+                checked={isEditMode}
+                onChange={e => !isServerTab && setIsEditMode(e.target.checked)}
+                disabled={isServerTab}
+                style={{ cursor: isServerTab ? "not-allowed" : "pointer" }}
+              />
+              <span style={{ fontSize: 11, color: isEditMode ? "#007acc" : "#666", fontWeight: isEditMode ? 600 : 400 }}>
+                Edit Mode
+              </span>
+            </label>
+          </div>
+        )}
       </div>
 
       {/* ── Content ── */}
@@ -135,11 +181,12 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
         )}
         {!isServerTab && !loading && !metaError && isSqlFile && (
           <SqlFileView 
-            path={tab.path} 
+            tab={tab}
             connections={connections} 
             activeConnectionId={activeConnectionId} 
             onStatus={onStatus} 
             defaultSafeRun={defaultSafeRun}
+            onUpdateTabMetadata={onUpdateTabMetadata}
           />
         )}
 
@@ -148,6 +195,10 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
             {tab.activeView === "overview"  && (
               <OverviewView 
                 metadata={metadata} 
+                isEditMode={isEditMode}
+                rdlPath={tab.path}
+                onRefresh={refreshMetadata}
+                onUpdateTabMetadata={onUpdateTabMetadata}
                 onTestDataset={(dsName) => {
                   setSelectedDataSetName(dsName);
                   onViewChange("sqltester");
@@ -163,6 +214,10 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
                 selectedDataSetName={selectedDataSetName}
                 onSelectedDataSetNameChange={setSelectedDataSetName}
                 defaultSafeRun={defaultSafeRun}
+                isEditMode={isEditMode}
+                rdlPath={tab.path}
+                onRefresh={refreshMetadata}
+                onUpdateTabMetadata={onUpdateTabMetadata}
               />
             )}
             {tab.activeView === "preview"   && (
@@ -196,8 +251,12 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 /* ─── Overview ─────────────────────────────────────────────────────────── */
 
-function OverviewView({ metadata, onTestDataset }: {
+function OverviewView({ metadata, isEditMode, rdlPath, onRefresh, onUpdateTabMetadata, onTestDataset }: {
   metadata: ReportMetadata;
+  isEditMode: boolean;
+  rdlPath: string;
+  onRefresh: () => void;
+  onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
   onTestDataset: (dsName: string) => void;
 }) {
   const empty = metadata.dataSets.length === 0 && metadata.parameters.length === 0 && metadata.dataSources.length === 0;
@@ -234,6 +293,10 @@ function OverviewView({ metadata, onTestDataset }: {
               <DatasetCard
                 key={ds.name}
                 dataset={ds}
+                isEditMode={isEditMode}
+                rdlPath={rdlPath}
+                onRefresh={onRefresh}
+                onUpdateTabMetadata={onUpdateTabMetadata}
                 onTest={() => onTestDataset(ds.name)}
               />
             ))}
@@ -310,21 +373,55 @@ function SectionBlock({ title, icon, children }: { title: string; icon: string; 
   );
 }
 
-function DatasetCard({ dataset, onTest }: {
+function DatasetCard({ dataset, isEditMode, rdlPath, onRefresh, onUpdateTabMetadata, onTest }: {
   dataset: DataSetInfo;
+  isEditMode: boolean;
+  rdlPath: string;
+  onRefresh: () => void;
+  onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
   onTest: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editedSql, setEditedSql] = useState(dataset.commandText || "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    onUpdateTabMetadata(rdlPath, { isDirty: editedSql !== (dataset.commandText || "") });
+  }, [editedSql, dataset.commandText, rdlPath]);
+
+  useEffect(() => {
+    setEditedSql(dataset.commandText || "");
+  }, [dataset.commandText]);
 
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await navigator.clipboard.writeText(dataset.commandText || "");
+      await navigator.clipboard.writeText(editedSql || "");
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error("Failed to copy!", err);
+    }
+  };
+
+  const handleSave = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!editedSql.trim()) return;
+    setSaving(true);
+    try {
+      await invoke("update_rdl_sql", { 
+        path: rdlPath, 
+        datasetName: dataset.name, 
+        newSql: editedSql 
+      });
+      const mtime = await invoke<number>("get_file_modified_time", { path: rdlPath });
+      onUpdateTabMetadata(rdlPath, { lastModified: mtime, isDirty: false });
+      onRefresh();
+    } catch (err) {
+      alert("Failed to save: " + err);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -358,6 +455,21 @@ function DatasetCard({ dataset, onTest }: {
           style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}
           onClick={e => e.stopPropagation()}
         >
+          {isEditMode && expanded && (
+            <button
+              onClick={handleSave}
+              disabled={saving || editedSql === dataset.commandText}
+              className="btn-primary"
+              style={{ 
+                fontSize: 11, padding: "2px 8px", height: 22, borderRadius: 2, gap: 4,
+                background: "#28a745"
+              }}
+            >
+              <span className={`codicon ${saving ? "codicon-loading codicon-modifier-spin" : "codicon-save"}`} style={{ fontSize: 11 }} />
+              Save
+            </button>
+          )}
+
           <button
             onClick={onTest}
             disabled={!dataset.commandText?.trim()}
@@ -376,10 +488,21 @@ function DatasetCard({ dataset, onTest }: {
           <Editor
             height="100%"
             defaultLanguage="sql"
-            value={dataset.commandText}
+            value={editedSql}
+            onChange={(val) => setEditedSql(val || "")}
             theme="vs"
+            onMount={(editor, monaco) => {
+              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                if (isEditMode) {
+                  // Simulate click on save button or call handleSave
+                  // Since handleSave is in the same scope, we can just call it
+                  // But wait, handleSave takes an event. We can pass a dummy one or refactor.
+                  handleSave({ stopPropagation: () => {} } as any);
+                }
+              });
+            }}
             options={{
-              readOnly: true,
+              readOnly: !isEditMode,
               minimap: { enabled: false },
               scrollBeyondLastLine: false,
               fontSize: 12,
@@ -424,7 +547,8 @@ interface ParamValue { name: string; prompt: string; dataType: string; value: st
 
 function SqlTesterView({ 
   metadata, connections, activeConnectionId, onStatus, 
-  selectedDataSetName, onSelectedDataSetNameChange, defaultSafeRun 
+  selectedDataSetName, onSelectedDataSetNameChange, defaultSafeRun,
+  isEditMode, rdlPath, onRefresh, onUpdateTabMetadata
 }: {
   metadata: ReportMetadata;
   connections: DbConnection[];
@@ -433,6 +557,10 @@ function SqlTesterView({
   selectedDataSetName: string | null;
   onSelectedDataSetNameChange: (dsName: string | null) => void;
   defaultSafeRun: boolean;
+  isEditMode: boolean;
+  rdlPath: string;
+  onRefresh: () => void;
+  onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
 }) {
   const datasets = metadata.dataSets.filter((d: DataSetInfo) => d.commandText?.trim());
   const [selectedDs, setSelectedDs] = useState<DataSetInfo | null>(() => {
@@ -461,10 +589,23 @@ function SqlTesterView({
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [connExpanded, setConnExpanded] = useState(false);
   const [sqlMode, setSqlMode] = useState<"formatted" | "raw">("formatted");
+  const [editedRawSql, setEditedRawSql] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (selectedDs) {
+      onUpdateTabMetadata(rdlPath, { isDirty: editedRawSql !== (selectedDs.commandText || "") });
+    }
+  }, [editedRawSql, selectedDs, rdlPath]);
+
+  useEffect(() => {
+    if (selectedDs) setEditedRawSql(selectedDs.commandText || "");
+  }, [selectedDs]);
 
   useHotkeys({
     "ctrl+enter": handleRun,
     "f5": handleRun,
+    "ctrl+s": handleSave,
   });
 
   const getInitialCatalog = (connStr: string) => {
@@ -517,10 +658,9 @@ function SqlTesterView({
     };
   }, [isResizing]);
 
-  const displaySql = useMemo(() => {
+  const formattedSql = useMemo(() => {
     if (!selectedDs) return "";
     const sql = selectedDs.commandText ?? "";
-    if (sqlMode === "raw") return sql;
     
     const isStoredProc = selectedDs.commandType.toLowerCase().includes("stored");
     if (params.length === 0) return sql;
@@ -541,7 +681,12 @@ function SqlTesterView({
       }).join("\n");
       return declarations + "\n\n" + sql;
     }
-  }, [selectedDs, params, sqlMode]);
+  }, [selectedDs, params]);
+
+  const displaySql = useMemo(() => {
+    if (!selectedDs) return "";
+    return sqlMode === "raw" ? editedRawSql : formattedSql;
+  }, [selectedDs, sqlMode, editedRawSql, formattedSql]);
 
   const handleCopySql = async () => {
     try {
@@ -620,6 +765,25 @@ function SqlTesterView({
       onStatus("", "Error");
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function handleSave() {
+    if (!selectedDs || !editedRawSql.trim()) return;
+    setSaving(true);
+    try {
+      await invoke("update_rdl_sql", { 
+        path: rdlPath, 
+        datasetName: selectedDs.name, 
+        newSql: editedRawSql 
+      });
+      const mtime = await invoke<number>("get_file_modified_time", { path: rdlPath });
+      onUpdateTabMetadata(rdlPath, { lastModified: mtime, isDirty: false });
+      onRefresh();
+    } catch (err) {
+      alert("Failed to save: " + err);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -727,6 +891,22 @@ function SqlTesterView({
       {/* Toolbar Right Portal - Run button */}
       {createPortal(
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {isEditMode && sqlMode === "raw" && (
+            <button
+              onClick={handleSave}
+              disabled={saving || editedRawSql === (selectedDs?.commandText || "")}
+              className="btn-primary"
+              style={{ 
+                height: 24, fontSize: 11, padding: "0 10px", borderRadius: 3, 
+                display: "flex", alignItems: "center", gap: 5, fontWeight: 600,
+                background: "#28a745"
+              }}
+            >
+              <span className={`codicon ${saving ? "codicon-loading codicon-modifier-spin" : "codicon-save"}`} style={{ fontSize: 11 }} />
+              Save
+            </button>
+          )}
+
           <button 
             onClick={handleRun} 
             disabled={running || !selectedDs}
@@ -790,12 +970,25 @@ function SqlTesterView({
           <div id="sql-tester-editor-container" style={{ position: "relative", flexShrink: 0, borderBottom: "1px solid #e8e8e8" }}>
             <div style={{ height: editorHeight, borderBottom: "1px solid #e8e8e8" }}>
               <Editor
+                key={sqlMode}
                 height="100%"
                 defaultLanguage="sql"
                 value={displaySql}
+                onChange={(val) => {
+                  if (isEditMode && sqlMode === "raw" && val !== formattedSql) {
+                    setEditedRawSql(val || "");
+                  }
+                }}
                 theme="vs"
+                onMount={(editor, monaco) => {
+                  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                    if (isEditMode && sqlMode === "raw") {
+                      handleSave();
+                    }
+                  });
+                }}
                 options={{
-                  readOnly: true,
+                  readOnly: !isEditMode || sqlMode !== "raw",
                   minimap: { enabled: false },
                   scrollBeyondLastLine: false,
                   fontSize: 12,
@@ -808,6 +1001,18 @@ function SqlTesterView({
                 }}
               />
             </div>
+            {isEditMode && sqlMode === "formatted" && (
+              <div style={{
+                position: "absolute", top: 8, right: 24, zIndex: 10,
+                background: "rgba(255, 243, 205, 0.95)", color: "#856404",
+                padding: "4px 10px", borderRadius: 4, fontSize: 11,
+                border: "1px solid #ffeeba", boxShadow: "0 2px 5px rgba(0,0,0,0.1)",
+                display: "flex", alignItems: "center", gap: 6, pointerEvents: "none"
+              }}>
+                <span className="codicon codicon-info" />
+                Switch to <strong>Raw</strong> mode to edit the SQL dataset
+              </div>
+            )}
             {/* Resizer Handle */}
             <div 
               onMouseDown={startResizing}
@@ -1061,7 +1266,7 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
   ssrsPassword: string;
   onStatus: (l: string, r: string) => void;
 }) {
-  if (tab.source === "local") {
+  if (tab.source === "local" && !tab.serverPath) {
     return (
       <Centered>
         <div style={{ textAlign: "center", padding: 40 }}>
@@ -1491,14 +1696,17 @@ function ResultTable({ result }: { result: QueryResult }) {
 
 /* ─── SQL File View ────────────────────────────────────────────────────── */
 
-function SqlFileView({ path, connections, activeConnectionId, onStatus, defaultSafeRun }: {
-  path: string;
+function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSafeRun, onUpdateTabMetadata }: {
+  tab: ReportTab;
   connections: DbConnection[];
   activeConnectionId: string;
   onStatus: (l: string, r: string) => void;
   defaultSafeRun: boolean;
+  onUpdateTabMetadata: (id: string, metadata: Partial<ReportTab>) => void;
 }) {
+  const path = tab.path;
   const [sql, setSql] = useState("");
+  const [originalSql, setOriginalSql] = useState("");
   const [connId, setConnId] = useState(activeConnectionId || connections[0]?.id || "");
   const [databases, setDatabases] = useState<string[]>([]);
   const [selectedDb, setSelectedDb] = useState("");
@@ -1520,6 +1728,7 @@ function SqlFileView({ path, connections, activeConnectionId, onStatus, defaultS
     invoke<string>("read_text_file", { path })
       .then(content => {
         setSql(content);
+        setOriginalSql(content);
         setLoading(false);
       })
       .catch(e => {
@@ -1527,6 +1736,12 @@ function SqlFileView({ path, connections, activeConnectionId, onStatus, defaultS
         setLoading(false);
       });
   }, [path]);
+
+  useEffect(() => {
+    if (!loading) {
+      onUpdateTabMetadata(tab.id, { isDirty: sql !== originalSql });
+    }
+  }, [sql, originalSql, tab.id, loading]);
 
   useEffect(() => {
     const conn = connections.find(c => c.id === connId);
@@ -1588,6 +1803,9 @@ function SqlFileView({ path, connections, activeConnectionId, onStatus, defaultS
   async function handleSave() {
     try {
       await invoke("write_text_file", { path, content: sql });
+      const mtime = await invoke<number>("get_file_modified_time", { path });
+      setOriginalSql(sql);
+      onUpdateTabMetadata(tab.id, { lastModified: mtime, isDirty: false });
       onStatus("File Saved", path.split(/[\\/]/).pop() || "");
     } catch (e: any) {
       alert(`Save failed: ${e}`);
@@ -1696,6 +1914,11 @@ function SqlFileView({ path, connections, activeConnectionId, onStatus, defaultS
           value={sql}
           onChange={val => setSql(val || "")}
           theme="vs"
+          onMount={(editor, monaco) => {
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+              handleSave();
+            });
+          }}
           options={{
             minimap: { enabled: false },
             fontSize: 13,

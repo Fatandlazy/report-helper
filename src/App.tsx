@@ -26,7 +26,7 @@ export default function App() {
 
   const { 
     tabs, activeId, activeTab, openTab, closeTab, closeTabsByPath, 
-    setTabView, setActiveId, updateTabMetadata, closeOthers, closeToRight, closeAll 
+    setTabView, setActiveId, updateTabMetadata, updateTabsByPath, closeOthers, closeToRight, closeAll 
   } = useTabs();
   const [status, setStatus] = useState({ left: "", right: "" });
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -109,9 +109,66 @@ export default function App() {
     }
   }
 
-  function handleTabViewChange(view: TabView) {
+  const handleTabViewChange = (view: TabView) => {
     if (activeId) setTabView(activeId, view);
-  }
+  };
+
+  const handleCloseTab = async (id: string) => {
+    const tab = tabs.find(t => t.id === id);
+    if (tab?.isDirty) {
+      const confirmed = await ask(`"${tab.title}" has unsaved changes. Do you want to close it anyway?`, {
+        title: "Unsaved Changes",
+        kind: "warning",
+        okLabel: "Close Anyway",
+        cancelLabel: "Cancel"
+      });
+      if (!confirmed) return;
+    }
+    closeTab(id);
+  };
+
+  const handleCloseOthers = async (id: string) => {
+    const others = tabs.filter(t => t.id !== id && t.isDirty);
+    if (others.length > 0) {
+      const confirmed = await ask(`${others.length} tab(s) have unsaved changes. Close them anyway?`, {
+        title: "Unsaved Changes",
+        kind: "warning",
+        okLabel: "Close Anyway",
+        cancelLabel: "Cancel"
+      });
+      if (!confirmed) return;
+    }
+    closeOthers(id);
+  };
+
+  const handleCloseToRight = async (id: string) => {
+    const idx = tabs.findIndex(t => t.id === id);
+    const toRight = tabs.slice(idx + 1).filter(t => t.isDirty);
+    if (toRight.length > 0) {
+      const confirmed = await ask(`${toRight.length} tab(s) have unsaved changes. Close them anyway?`, {
+        title: "Unsaved Changes",
+        kind: "warning",
+        okLabel: "Close Anyway",
+        cancelLabel: "Cancel"
+      });
+      if (!confirmed) return;
+    }
+    closeToRight(id);
+  };
+
+  const handleCloseAll = async () => {
+    const dirty = tabs.filter(t => t.isDirty);
+    if (dirty.length > 0) {
+      const confirmed = await ask(`${dirty.length} tab(s) have unsaved changes. Close all anyway?`, {
+        title: "Unsaved Changes",
+        kind: "warning",
+        okLabel: "Close Anyway",
+        cancelLabel: "Cancel"
+      });
+      if (!confirmed) return;
+    }
+    closeAll();
+  };
 
   const section = settings.lastSection;
   const activeFilePath = activeTab?.source === "local" ? activeTab.path : null;
@@ -157,8 +214,9 @@ export default function App() {
         )}
 
         {/* Main area */}
-        <div className="flex flex-col flex-1 overflow-hidden">
-          {section === "sqleditor" ? (
+        <div className="flex flex-col flex-1 overflow-hidden relative">
+          {/* SQL Editor Panel */}
+          <div className="flex flex-col flex-1 overflow-hidden" style={{ display: section === "sqleditor" ? "flex" : "none" }}>
             <SqlEditorPanel
               connections={settings.connections}
               workspaceFolders={settings.workspaceFolders}
@@ -168,8 +226,12 @@ export default function App() {
               onStatus={onStatus}
               sidebarVisible={sidebarVisible}
               defaultSafeRun={settings.defaultSafeRun}
+              onUpdateTabMetadata={updateTabsByPath}
             />
-          ) : section === "settings" ? (
+          </div>
+
+          {/* Settings Panel */}
+          <div className="flex flex-col flex-1 overflow-hidden" style={{ display: section === "settings" ? "flex" : "none" }}>
             <SettingsPanel
               settings={settings}
               onUpdateSettings={updateSettings}
@@ -177,37 +239,39 @@ export default function App() {
               onAddConnection={addConnection}
               onRemoveConnection={removeConnection}
             />
-          ) : (
-            <>
-              <TabBar
-                tabs={tabs}
-                activeId={activeId}
-                onSelect={setActiveId}
-                onClose={closeTab}
-                onCloseOthers={closeOthers}
-                onCloseToRight={closeToRight}
-                onCloseAll={closeAll}
-              />
-              <div className="flex-1 overflow-hidden">
-                {activeTab ? (
-                  <ReportTabContent
-                    key={`${activeTab.id}-${reloadCounter}`}
-                    tab={activeTab}
-                    connections={settings.connections}
-                    activeConnectionId={settings.activeConnectionId}
-                    ssrsUrl={settings.ssrsUrl}
-                    ssrsUsername={settings.ssrsUsername}
-                    ssrsPassword={settings.ssrsPassword}
-                    onViewChange={handleTabViewChange}
-                    onStatus={onStatus}
-                    defaultSafeRun={settings.defaultSafeRun}
-                  />
-                ) : (
-                  <WelcomeScreen section={section} />
-                )}
-              </div>
-            </>
-          )}
+          </div>
+
+          {/* Reports Panel (Explorer/Server Tabs) */}
+          <div className="flex flex-col flex-1 overflow-hidden" style={{ display: (section === "explorer" || section === "server") ? "flex" : "none" }}>
+            <TabBar
+              tabs={tabs}
+              activeId={activeId}
+              onSelect={setActiveId}
+              onClose={handleCloseTab}
+              onCloseOthers={handleCloseOthers}
+              onCloseToRight={handleCloseToRight}
+              onCloseAll={handleCloseAll}
+            />
+            <div className="flex-1 overflow-hidden">
+              {activeTab ? (
+                <ReportTabContent
+                  key={`${activeTab.id}-${reloadCounter}`}
+                  tab={activeTab}
+                  connections={settings.connections}
+                  activeConnectionId={settings.activeConnectionId}
+                  ssrsUrl={settings.ssrsUrl}
+                  ssrsUsername={settings.ssrsUsername}
+                  ssrsPassword={settings.ssrsPassword}
+                  onViewChange={handleTabViewChange}
+                  onStatus={onStatus}
+                  defaultSafeRun={settings.defaultSafeRun}
+                  onUpdateTabMetadata={updateTabsByPath}
+                />
+              ) : (
+                <WelcomeScreen section={section} />
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

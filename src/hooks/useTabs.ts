@@ -94,6 +94,13 @@ export function useTabs() {
     }));
   }, []);
 
+  const updateTabsByPath = useCallback((path: string, metadata: Partial<ReportTab>) => {
+    setState(prev => ({
+      ...prev,
+      tabs: prev.tabs.map(t => t.path === path ? { ...t, ...metadata } : t),
+    }));
+  }, []);
+
   const closeOthers = useCallback((id: string) => {
     setState(prev => ({
       tabs: prev.tabs.filter(t => t.id === id),
@@ -127,6 +134,7 @@ export function useTabs() {
     setTabView, 
     setActiveId,
     updateTabMetadata,
+    updateTabsByPath,
     closeOthers,
     closeToRight,
     closeAll

@@ -9,6 +9,7 @@ export interface ReportTab {
   serverPath?: string;   // original SSRS path for preview URL
   activeView: TabView;
   lastModified?: number; // timestamp of file on disk
+  isDirty?: boolean;
 }
 
 export interface WorkspaceFolder {

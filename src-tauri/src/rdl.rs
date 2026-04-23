@@ -1,5 +1,6 @@
-use quick_xml::events::Event;
+use quick_xml::events::{BytesCData, BytesText, Event};
 use quick_xml::reader::Reader;
+use quick_xml::writer::Writer;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -312,4 +313,87 @@ fn local_name_end(e: &quick_xml::events::BytesEnd) -> String {
 fn attr_value(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<String> {
     e.attributes().flatten().find(|a| a.key.as_ref() == key)
         .and_then(|a| String::from_utf8(a.value.to_vec()).ok())
+}
+
+pub fn update_rdl_sql(path: &str, dataset_name: &str, new_sql: &str) -> Result<(), String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+
+    let mut reader = Reader::from_str(&content);
+    reader.config_mut().trim_text(false); // preserve whitespace for writer
+
+    let mut writer = Writer::new(std::io::Cursor::new(Vec::new()));
+    let mut path_stack: Vec<String> = Vec::new();
+    let mut in_target_dataset = false;
+    let mut in_command_text = false;
+    let mut dataset_updated = false;
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let local = local_name(&e);
+                path_stack.push(local.clone());
+
+                if local == "DataSet" {
+                    if let Some(name) = attr_value(&e, b"Name") {
+                        if name == dataset_name {
+                            in_target_dataset = true;
+                        }
+                    }
+                } else if local == "CommandText" && in_target_dataset {
+                    in_command_text = true;
+                    writer.write_event(Event::Start(e.clone())).map_err(|e| e.to_string())?;
+                    // We will skip the existing text and write our own in Event::Text
+                    buf.clear();
+                    continue;
+                }
+                writer.write_event(Event::Start(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::End(e)) => {
+                let local = local_name_end(&e);
+                if local == "DataSet" && in_target_dataset {
+                    in_target_dataset = false;
+                } else if local == "CommandText" && in_command_text {
+                    in_command_text = false;
+                }
+                writer.write_event(Event::End(e)).map_err(|e| e.to_string())?;
+                path_stack.pop();
+            }
+            Ok(Event::Text(e)) => {
+                if in_command_text {
+                    // Replace the text with new SQL
+                    writer.write_event(Event::Text(BytesText::new(new_sql)))
+                        .map_err(|e| e.to_string())?;
+                    dataset_updated = true;
+                } else {
+                    writer.write_event(Event::Text(e)).map_err(|e| e.to_string())?;
+                }
+            }
+            Ok(Event::CData(e)) => {
+                if in_command_text {
+                    writer.write_event(Event::CData(BytesCData::new(new_sql)))
+                        .map_err(|e| e.to_string())?;
+                    dataset_updated = true;
+                } else {
+                    writer.write_event(Event::CData(e)).map_err(|e| e.to_string())?;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(e) => {
+                writer.write_event(e).map_err(|e| e.to_string())?;
+            }
+            Err(e) => return Err(format!("XML parse error: {e}")),
+        }
+        buf.clear();
+    }
+
+    if !dataset_updated {
+        return Err(format!("Dataset '{}' not found or has no CommandText", dataset_name));
+    }
+
+    let result = writer.into_inner().into_inner();
+    std::fs::write(path, result).map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(())
 }

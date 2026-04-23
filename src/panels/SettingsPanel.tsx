@@ -1,6 +1,8 @@
 import { AppSettings, DbConnection } from "../types";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import { useState, useEffect } from "react";
 
 interface Props {
   settings: AppSettings;
@@ -15,6 +17,11 @@ export function SettingsPanel({
   onAddConnection, onRemoveConnection 
 }: Props) {
   const { ssrsUrl, ssrsUsername, ssrsPassword, connections } = settings;
+  const [version, setVersion] = useState<string>("");
+
+  useEffect(() => {
+    getVersion().then(setVersion);
+  }, []);
 
   const handleExport = async () => {
     try {
@@ -187,6 +194,15 @@ export function SettingsPanel({
             Export your settings to a JSON file to backup or move them to another machine.
           </p>
         </section>
+
+        <div style={{ 
+          marginTop: 60, padding: "20px 0", borderTop: "1px solid #eee", 
+          textAlign: "center", color: "#aaa" 
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#999", marginBottom: 4 }}>Report Helper</div>
+          <div style={{ fontSize: 11 }}>Version {version}</div>
+          <div style={{ fontSize: 10, marginTop: 8 }}>&copy; {new Date().getFullYear()} Report Helper. All rights reserved.</div>
+        </div>
       </div>
     </div>
   );
