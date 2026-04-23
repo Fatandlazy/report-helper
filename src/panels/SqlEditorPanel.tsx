@@ -534,10 +534,13 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
               onClick={handleRun}
               disabled={running || !sql.trim() || !connId}
               className="btn-primary"
-              style={{ borderRadius: 2, padding: "4px 20px", background: "#28a745" }}
+              style={{ 
+                borderRadius: 2, padding: "4px 20px", 
+                background: defaultSafeRun ? "#28a745" : "#00539c" 
+              }}
             >
               <span className="codicon codicon-play" style={{ fontSize: 13 }} />
-              {running ? "Running…" : "Run (Safe)"}
+              {running ? "Running…" : defaultSafeRun ? "Run (Safe)" : "Run"}
             </button>
           </div>
         </div>
