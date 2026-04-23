@@ -36,9 +36,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__ # tauri-action replaces this with the app version
-          releaseName: "Release v__VERSION__"
+          tagName: ${{ github.ref_name }}
+          releaseName: "Release ${{ github.ref_name }}"
           releaseBody: "Automated release from GitHub Actions."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
