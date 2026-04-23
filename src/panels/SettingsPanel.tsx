@@ -132,6 +132,44 @@ export function SettingsPanel({
           </div>
         </section>
 
+        {/* General Section */}
+        <section style={{ marginBottom: 40 }}>
+          <h2 style={{ fontSize: 13, fontWeight: 600, color: "#007acc", textTransform: "uppercase", marginBottom: 16, borderBottom: "1px solid #eee", paddingBottom: 8 }}>
+            General Settings
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+              <input 
+                type="checkbox" 
+                checked={settings.defaultSafeRun} 
+                onChange={e => onUpdateSettings({ defaultSafeRun: e.target.checked })} 
+              />
+              <div style={{ fontSize: 13 }}>
+                <div style={{ fontWeight: 500, color: "#333" }}>Default Safe Run</div>
+                <div style={{ fontSize: 11, color: "#888" }}>Wrap SQL queries in a transaction and rollback automatically (BEGIN TRANSACTION ... ROLLBACK).</div>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        {/* Shortcuts Section */}
+        <section style={{ marginBottom: 40 }}>
+          <h2 style={{ fontSize: 13, fontWeight: 600, color: "#007acc", textTransform: "uppercase", marginBottom: 16, borderBottom: "1px solid #eee", paddingBottom: 8 }}>
+            Keyboard Shortcuts
+          </h2>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 40px" }}>
+            <ShortcutItem keys="Ctrl + B" description="Toggle Sidebar" />
+            <ShortcutItem keys="Ctrl + ," description="Open Settings" />
+            <ShortcutItem keys="Ctrl + W" description="Close Current Tab" />
+            <ShortcutItem keys="Ctrl + Alt + 1/E" description="Switch to Explorer" />
+            <ShortcutItem keys="Ctrl + Alt + 2/S" description="Switch to Server" />
+            <ShortcutItem keys="Ctrl + Alt + 3/Q" description="Switch to SQL Editor" />
+            <ShortcutItem keys="Ctrl + Enter / F5" description="Run SQL Query" />
+            <ShortcutItem keys="Ctrl + S" description="Save SQL File" />
+            <ShortcutItem keys="Ctrl + N" description="New SQL File" />
+          </div>
+        </section>
+
         {/* Backup Section */}
         <section style={{ marginBottom: 40 }}>
           <h2 style={{ fontSize: 13, fontWeight: 600, color: "#007acc", textTransform: "uppercase", marginBottom: 16, borderBottom: "1px solid #eee", paddingBottom: 8 }}>
@@ -150,6 +188,24 @@ export function SettingsPanel({
           </p>
         </section>
       </div>
+    </div>
+  );
+}
+
+function ShortcutItem({ keys, description }: { keys: string; description: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
+      <span style={{ fontSize: 13, color: "#555" }}>{description}</span>
+      <span style={{ 
+        fontSize: 11, 
+        fontFamily: "monospace", 
+        background: "#f0f0f0", 
+        padding: "2px 6px", 
+        borderRadius: 4, 
+        border: "1px solid #ddd",
+        color: "#333",
+        fontWeight: 600
+      }}>{keys}</span>
     </div>
   );
 }

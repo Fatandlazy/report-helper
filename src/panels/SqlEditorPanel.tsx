@@ -4,6 +4,7 @@ import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
 import { DbConnection, QueryResult, WorkspaceFolder, SAMPLE_SQL } from "../types";
 import { useCallback } from "react";
+import { useHotkeys } from "../hooks/useHotkeys";
 
 interface Props {
   connections: DbConnection[];
@@ -13,13 +14,14 @@ interface Props {
   onUpdateConnection: (conn: DbConnection) => void;
   onStatus: (left: string, right: string) => void;
   sidebarVisible: boolean;
+  defaultSafeRun: boolean;
 }
 
 
 type FormMode = "add" | "edit" | null;
 type TestState = "idle" | "testing" | "ok" | "fail";
 
-export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection, onRemoveConnection, onUpdateConnection, onStatus, sidebarVisible }: Props) {
+export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection, onRemoveConnection, onUpdateConnection, onStatus, sidebarVisible, defaultSafeRun }: Props) {
   const [connId, setConnId] = useState(connections[0]?.id ?? "");
   const [sql, setSql] = useState(SAMPLE_SQL);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
@@ -160,6 +162,13 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
   const [testState, setTestState] = useState<TestState>("idle");
   const [testMsg, setTestMsg] = useState("");
 
+  useHotkeys({
+    "ctrl+enter": handleRun,
+    "f5": handleRun,
+    "ctrl+s": handleSaveSql,
+    "ctrl+n": handleNewSql,
+  });
+
   async function handleRun() {
     const trimmedSql = sql.trim();
     if (!trimmedSql) return;
@@ -169,8 +178,10 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
     setRunning(true);
     setError(null);
     try {
-      // Always use Safe Run (Transaction + Rollback)
-      const finalSql = `BEGIN TRANSACTION;\n${trimmedSql}\nROLLBACK;`;
+      // Use Safe Run based on settings
+      const finalSql = defaultSafeRun 
+        ? `BEGIN TRANSACTION;\n${trimmedSql}\nROLLBACK;` 
+        : trimmedSql;
 
       const res = await invoke<QueryResult>("run_sql", {
         sql: finalSql,
@@ -180,7 +191,7 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
         database: selectedDb || null,
       });
       setResult(res);
-      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms (Safe Run)`);
+      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${defaultSafeRun ? " (Safe)" : ""}`);
     } catch (e: any) {
       setError(String(e));
       onStatus("", "Error");

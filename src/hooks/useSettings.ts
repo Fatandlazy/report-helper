@@ -12,6 +12,7 @@ const defaultSettings: AppSettings = {
   lastSection: "explorer",
   activeConnectionId: "",
   hiddenSsrsPaths: [],
+  defaultSafeRun: true,
 };
 
 function load(): AppSettings {

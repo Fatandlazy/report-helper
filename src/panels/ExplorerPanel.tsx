@@ -31,7 +31,7 @@ function getFileIcon(filename: string) {
   }
 }
 
- function buildTree(rootPath: string, filePaths: string[], creatingPath: string | null): FileTreeNode {
+ function buildTree(rootPath: string, filePaths: string[], creatingPath: string | null, renamingPath: string | null): FileTreeNode {
   const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/$/, "");
   const normRoot = normalize(rootPath);
 
@@ -81,11 +81,12 @@ function getFileIcon(filename: string) {
     const normCreating = normalize(creatingPath);
     const normRoot = normalize(rootPath);
     
-    if (normCreating === normRoot) {
-      root.children.push({ name: "", path: normRoot + "/$NEW$", isFolder: true, children: [], isCreating: true });
-    } else if (normCreating.startsWith(normRoot)) {
-      const relative = normCreating.slice(normRoot.length).replace(/^\//, "");
-      const parts = relative.split("/");
+    // Check if we are creating a SQL file or a folder based on renamingPath
+    const isNewSql = renamingPath?.endsWith("/$NEW_SQL$");
+
+    if (normCreating === normRoot || normCreating.startsWith(normRoot)) {
+      const relative = normCreating === normRoot ? "" : normCreating.slice(normRoot.length).replace(/^\//, "");
+      const parts = relative ? relative.split("/") : [];
       let current = root;
       let found = true;
       for (const part of parts) {
@@ -94,7 +95,15 @@ function getFileIcon(filename: string) {
         current = next;
       }
       if (found) {
-        current.children.push({ name: "", path: normCreating + "/$NEW$", isFolder: true, children: [], isCreating: true });
+        const isFolder = !isNewSql;
+        const suffix = isNewSql ? "/$NEW_SQL$" : "/$NEW$";
+        current.children.push({ 
+          name: "", 
+          path: normCreating + suffix, 
+          isFolder: isFolder, 
+          children: [], 
+          isCreating: true 
+        });
       }
     }
   }
@@ -217,7 +226,9 @@ function FileTreeView({
             </>
           ) : (
             (() => {
-              const info = getFileIcon(node.name);
+              const info = node.path.endsWith("/$NEW_SQL$") 
+                ? { icon: "codicon-database", color: "#e38100" } 
+                : getFileIcon(node.name);
               return <span className={`codicon ${info.icon}`} style={{ fontSize: 14, color: isActive ? "#00539c" : info.color, flexShrink: 0, marginLeft: 16 }} />;
             })()
           )}
@@ -609,7 +620,7 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
         {/* Workspace folder trees */}
         {!filteredFiles && workspaceFolders.map(wf => {
           const files = folderFiles[wf.path] ?? [];
-          const tree = buildTree(wf.path, files, creatingFolderParent);
+          const tree = buildTree(wf.path, files, creatingFolderParent, renamingPath);
           return (
             <div key={wf.path}>
               <div

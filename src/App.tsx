@@ -2,6 +2,7 @@ import { useState } from "react";
 import "./index.css";
 import { useSettings } from "./hooks/useSettings";
 import { useTabs } from "./hooks/useTabs";
+import { useHotkeys } from "./hooks/useHotkeys";
 import { TabView, TreeNode, Section } from "./types";
 import { ActivityBar } from "./components/ActivityBar";
 import { TitleBar } from "./components/TitleBar";
@@ -25,6 +26,20 @@ export default function App() {
   const [status, setStatus] = useState({ left: "", right: "" });
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [ssrsTree, setSsrsTree] = useState<TreeNode[]>([]);
+
+  useHotkeys({
+    "ctrl+b": () => setSidebarVisible(v => !v),
+    "ctrl+,": () => setSection("settings"),
+    "ctrl+alt+1": () => setSection("explorer"),
+    "ctrl+alt+2": () => setSection("server"),
+    "ctrl+alt+3": () => setSection("sqleditor"),
+    "ctrl+alt+e": () => setSection("explorer"),
+    "ctrl+alt+s": () => setSection("server"),
+    "ctrl+alt+q": () => setSection("sqleditor"),
+    "ctrl+w": () => {
+      if (activeId) closeTab(activeId);
+    }
+  });
 
   function handleSectionChange(newSection: Section) {
     if (newSection === settings.lastSection) {
@@ -112,6 +127,7 @@ export default function App() {
               onUpdateConnection={updateConnection}
               onStatus={onStatus}
               sidebarVisible={sidebarVisible}
+              defaultSafeRun={settings.defaultSafeRun}
             />
           ) : section === "settings" ? (
             <SettingsPanel
@@ -141,6 +157,7 @@ export default function App() {
                     ssrsPassword={settings.ssrsPassword}
                     onViewChange={handleTabViewChange}
                     onStatus={onStatus}
+                    defaultSafeRun={settings.defaultSafeRun}
                   />
                 ) : (
                   <WelcomeScreen section={section} />

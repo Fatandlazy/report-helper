@@ -38,6 +38,7 @@ export interface AppSettings {
   lastSection: Section;
   activeConnectionId: string;
   hiddenSsrsPaths: string[];
+  defaultSafeRun: boolean;
 }
 
 export interface QueryParameter {

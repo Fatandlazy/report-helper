@@ -49,8 +49,14 @@ export function TabBar({ tabs, activeId, onSelect, onClose }: Props) {
             onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
           >
             <span
-              className="codicon codicon-file-code"
-              style={{ fontSize: 13, flexShrink: 0, color: tab.source === "server" ? "#0078d4" : (isActive ? "#519aba" : "#aaa") }}
+              className={tab.title.toLowerCase().endsWith(".sql") ? "codicon codicon-database" : "codicon codicon-file-code"}
+              style={{ 
+                fontSize: 13, 
+                flexShrink: 0, 
+                color: tab.title.toLowerCase().endsWith(".sql") 
+                  ? (isActive ? "#e38100" : "#aaa")
+                  : (tab.source === "server" ? "#0078d4" : (isActive ? "#519aba" : "#aaa")) 
+              }}
             />
             <span
               style={{

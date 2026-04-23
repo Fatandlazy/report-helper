@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import Editor from "@monaco-editor/react";
 import { ReportTab, TabView, ReportMetadata, DataSetInfo, DbConnection, QueryResult, ReportParameter, ParameterValue, DataSourceInfo, QueryParameter } from "../types";
+import { useHotkeys } from "../hooks/useHotkeys";
 
 interface Props {
   tab: ReportTab;
@@ -12,6 +14,7 @@ interface Props {
   ssrsPassword: string;
   onViewChange: (view: TabView) => void;
   onStatus: (left: string, right: string) => void;
+  defaultSafeRun: boolean;
 }
 
 const VIEWS: { id: TabView; label: string; icon: string }[] = [
@@ -20,7 +23,7 @@ const VIEWS: { id: TabView; label: string; icon: string }[] = [
   { id: "preview",   label: "Preview",    icon: "codicon-eye" },
 ];
 
-export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl, ssrsUsername, ssrsPassword, onViewChange, onStatus }: Props) {
+export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl, ssrsUsername, ssrsPassword, onViewChange, onStatus, defaultSafeRun }: Props) {
   const [metadata, setMetadata] = useState<ReportMetadata | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,8 +37,13 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
     setMetaError(null);
 
     const ext = tab.path.split(".").pop()?.toLowerCase();
+    if (ext === "sql") {
+      setLoading(false);
+      return;
+    }
+
     if (ext !== "rdl" && ext !== "rdlc") {
-      setMetaError("Not a report file. Currently only .rdl and .rdlc files are supported for editing/previewing.");
+      setMetaError("Unsupported file type. Currently only .rdl, .rdlc, and .sql files are supported.");
       return;
     }
 
@@ -45,9 +53,14 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
       .catch(e => { setMetaError(String(e)); setLoading(false); });
   }, [tab.path]);
 
+  const ext = tab.path.split(".").pop()?.toLowerCase();
+  const isSqlFile = ext === "sql";
+
   // Server tabs: only show Preview
   const visibleViews = isServerTab
     ? VIEWS.filter(v => v.id === "preview")
+    : isSqlFile
+    ? [] 
     : VIEWS;
 
   return (
@@ -56,33 +69,46 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
       {/* ── Toolbar ── */}
       <div style={{
         display: "flex", alignItems: "center", gap: 2,
-        height: 35, padding: "0 12px",
+        height: 38, padding: "0 12px",
         borderBottom: "1px solid #e8e8e8", background: "#f8f8f8", flexShrink: 0,
       }}>
-        {visibleViews.map(btn => {
-          const isActive = tab.activeView === btn.id;
-          return (
-            <button
-              key={btn.id}
-              onClick={() => onViewChange(btn.id)}
-              style={{
-                display: "flex", alignItems: "center", gap: 5,
-                padding: "4px 10px", borderRadius: 3,
-                background: isActive ? "#e4e6f1" : "transparent",
-                color: isActive ? "#1a1a6e" : "#666",
-                fontSize: 12,
-                fontWeight: isActive ? 600 : 400,
-                border: "none", cursor: "pointer",
-                transition: "background 0.1s",
-              }}
-              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = "rgba(0,0,0,0.06)"; }}
-              onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
-            >
-              <span className={`codicon ${btn.icon}`} style={{ fontSize: 13 }} />
-              {btn.label}
-            </button>
-          );
-        })}
+        <div style={{ display: "flex", alignItems: "center", gap: 2, flex: 1 }}>
+          {visibleViews.map(btn => {
+            const isActive = tab.activeView === btn.id;
+            const isDisabled = btn.id === "preview" && !isServerTab;
+            return (
+              <button
+                key={btn.id}
+                onClick={() => !isDisabled && onViewChange(btn.id)}
+                disabled={isDisabled}
+                title={isDisabled ? "This feature is currently disabled for local" : ""}
+                style={{
+                  display: "flex", alignItems: "center", gap: 5,
+                  padding: "4px 10px", borderRadius: 3,
+                  background: isActive ? "#e4e6f1" : "transparent",
+                  color: isActive ? "#1a1a6e" : isDisabled ? "#bbb" : "#666",
+                  fontSize: 12,
+                  fontWeight: isActive ? 600 : 400,
+                  border: "none", 
+                  cursor: "pointer",
+                  transition: "background 0.1s",
+                  opacity: isDisabled ? 0.6 : 1,
+                }}
+                onMouseEnter={e => { if (!isActive && !isDisabled) e.currentTarget.style.background = "rgba(0,0,0,0.06)"; }}
+                onMouseLeave={e => { if (!isActive && !isDisabled) e.currentTarget.style.background = "transparent"; }}
+              >
+                <span className={`codicon ${btn.icon}`} style={{ fontSize: 13 }} />
+                {btn.label}
+              </button>
+            );
+          })}
+          
+          {/* Left Portal Target (Connection/DB) */}
+          <div id="report-toolbar-left" style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 15 }}></div>
+        </div>
+        
+        {/* Right Portal Target (Run/Save) */}
+        <div id="report-toolbar-right" style={{ display: "flex", alignItems: "center", gap: 10 }}></div>
       </div>
 
       {/* ── Content ── */}
@@ -107,7 +133,17 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
             </span>
           </Centered>
         )}
-        {!isServerTab && !loading && !metaError && metadata && (
+        {!isServerTab && !loading && !metaError && isSqlFile && (
+          <SqlFileView 
+            path={tab.path} 
+            connections={connections} 
+            activeConnectionId={activeConnectionId} 
+            onStatus={onStatus} 
+            defaultSafeRun={defaultSafeRun}
+          />
+        )}
+
+        {!isServerTab && !loading && !metaError && metadata && !isSqlFile && (
           <>
             {tab.activeView === "overview"  && (
               <OverviewView 
@@ -126,6 +162,7 @@ export function ReportTabContent({ tab, connections, activeConnectionId, ssrsUrl
                 onStatus={onStatus} 
                 selectedDataSetName={selectedDataSetName}
                 onSelectedDataSetNameChange={setSelectedDataSetName}
+                defaultSafeRun={defaultSafeRun}
               />
             )}
             {tab.activeView === "preview"   && (
@@ -385,13 +422,17 @@ function DatasetCard({ dataset, onTest }: {
 
 interface ParamValue { name: string; prompt: string; dataType: string; value: string | null; nullable?: boolean; hidden?: boolean; }
 
-function SqlTesterView({ metadata, connections, activeConnectionId, onStatus, selectedDataSetName, onSelectedDataSetNameChange }: {
+function SqlTesterView({ 
+  metadata, connections, activeConnectionId, onStatus, 
+  selectedDataSetName, onSelectedDataSetNameChange, defaultSafeRun 
+}: {
   metadata: ReportMetadata;
   connections: DbConnection[];
   activeConnectionId: string;
   onStatus: (l: string, r: string) => void;
   selectedDataSetName: string | null;
-  onSelectedDataSetNameChange: (dsName: string) => void;
+  onSelectedDataSetNameChange: (dsName: string | null) => void;
+  defaultSafeRun: boolean;
 }) {
   const datasets = metadata.dataSets.filter((d: DataSetInfo) => d.commandText?.trim());
   const [selectedDs, setSelectedDs] = useState<DataSetInfo | null>(() => {
@@ -408,6 +449,8 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus, se
     }
   }, [selectedDataSetName, datasets]);
   const [connId, setConnId] = useState(activeConnectionId || connections[0]?.id || "");
+  const [databases, setDatabases] = useState<string[]>([]);
+  const [selectedDb, setSelectedDb] = useState("");
   const [params, setParams] = useState<ParamValue[]>([]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -416,7 +459,39 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus, se
   const [editorHeight, setEditorHeight] = useState(160);
   const [isResizing, setIsResizing] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [connExpanded, setConnExpanded] = useState(false);
   const [sqlMode, setSqlMode] = useState<"formatted" | "raw">("formatted");
+
+  useHotkeys({
+    "ctrl+enter": handleRun,
+    "f5": handleRun,
+  });
+
+  const getInitialCatalog = (connStr: string) => {
+    const match = connStr.match(/(?:Initial Catalog|Database)=([^;]+)/i);
+    return match ? match[1].trim() : "";
+  };
+
+  useEffect(() => {
+    const conn = connections.find(c => c.id === connId);
+    if (!conn) {
+      setDatabases([]);
+      setSelectedDb("");
+      return;
+    }
+
+    const initialDb = getInitialCatalog(conn.connectionString);
+    setSelectedDb(initialDb);
+
+    invoke<string[]>("get_databases", { connectionString: conn.connectionString })
+      .then(dbs => {
+        setDatabases(dbs);
+        if (initialDb && !dbs.some(d => d.toLowerCase() === initialDb.toLowerCase())) {
+          setDatabases(prev => [...new Set([initialDb, ...prev])].sort());
+        }
+      })
+      .catch(() => setDatabases([]));
+  }, [connId, connections]);
 
   const startResizing = (e: React.MouseEvent) => {
     setIsResizing(true);
@@ -527,14 +602,19 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus, se
         }
         paramMap[p.name] = val; 
       });
+      const finalSql = defaultSafeRun 
+        ? `BEGIN TRANSACTION;\n${selectedDs.commandText}\nROLLBACK;` 
+        : selectedDs.commandText;
+
       const res = await invoke<QueryResult>("run_sql", {
-        sql: selectedDs.commandText,
+        sql: finalSql,
         connectionString: conn.connectionString,
         params: paramMap,
         isStoredProc: selectedDs.commandType.toLowerCase().includes("stored"),
+        database: selectedDb || null,
       });
       setResult(res);
-      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms`);
+      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${defaultSafeRun ? " (Safe)" : ""}`);
     } catch (e: any) {
       setError(String(e));
       onStatus("", "Error");
@@ -553,25 +633,62 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus, se
           background: "#f8f8f8", overflowY: "auto", padding: "12px",
           display: "flex", flexDirection: "column", gap: 12,
         }}>
-          <div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div 
+            onClick={() => setConnExpanded(!connExpanded)}
+            style={{ 
+              display: "flex", alignItems: "center", gap: 6, cursor: "pointer", 
+              userSelect: "none", padding: "4px 0", borderBottom: "1px solid #eee" 
+            }}
+          >
+            <span className={`codicon ${connExpanded ? "codicon-chevron-down" : "codicon-chevron-right"}`} style={{ fontSize: 12, color: "#666" }} />
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#007acc", textTransform: "uppercase" }}>Connection Settings</span>
+          </div>
+          
+          {connExpanded && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "4px 8px", background: "rgba(0,0,0,0.02)", borderRadius: 4 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 4 }}>Connection</label>
+                <select 
+                  style={{ width: "100%", fontSize: 12, height: 26, padding: "0 4px", borderRadius: 3, border: "1px solid #ccc", background: "#fff" }}
+                  value={connId} 
+                  onChange={e => setConnId(e.target.value)}
+                >
+                  {connections.length === 0 && <option value="">—</option>}
+                  {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+
+              {databases.length > 0 && (
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 4 }}>Database</label>
+                  <select 
+                    style={{ width: "100%", fontSize: 12, height: 26, padding: "0 4px", borderRadius: 3, border: "1px solid #ccc", background: "#fff" }}
+                    value={selectedDb} 
+                    onChange={e => setSelectedDb(e.target.value)}
+                  >
+                    {databases.map(db => <option key={db} value={db}>{db}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div>
           <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 4 }}>Dataset</label>
           <select
             value={selectedDs?.name ?? ""}
             onChange={e => { onSelectedDataSetNameChange(e.target.value); }}
             disabled={datasets.length === 0}
+            style={{ width: "100%" }}
           >
             {datasets.length === 0 && <option>—</option>}
             {datasets.map((d: DataSetInfo) => <option key={d.name} value={d.name}>{d.name}</option>)}
           </select>
         </div>
 
-        <div>
-          <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 4 }}>Connection</label>
-          <select value={connId} onChange={e => setConnId(e.target.value)}>
-            {connections.length === 0 && <option value="">— no connections —</option>}
-            {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
+        {/* Sidebar now only shows Dataset and Parameters */}
 
         {params.length > 0 && (
           <div>
@@ -599,20 +716,34 @@ function SqlTesterView({ metadata, connections, activeConnectionId, onStatus, se
           </div>
         )}
 
-        <button
-          onClick={handleRun}
-          disabled={running || !selectedDs || !connId}
-          className="btn-primary"
-          style={{ justifyContent: "center", borderRadius: 2, marginTop: "auto" }}
-        >
-          <span className="codicon codicon-play" style={{ fontSize: 13 }} />
-          {running ? "Running…" : "Run"}
-        </button>
+        {/* Run button moved to Portal */}
       </div>
       )}
 
       {/* SQL + Results */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {/* Toolbar Left Portal - Empty for SqlTesterView as we moved them to sidebar */}
+
+      {/* Toolbar Right Portal - Run button */}
+      {createPortal(
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button 
+            onClick={handleRun} 
+            disabled={running || !selectedDs}
+            className="btn-primary"
+            style={{ 
+              height: 24, fontSize: 11, padding: "0 10px", borderRadius: 3, 
+              display: "flex", alignItems: "center", gap: 5, fontWeight: 600,
+              background: defaultSafeRun ? "#28a745" : "#00539c"
+            }}
+          >
+            <span className={`codicon ${running ? "codicon-loading codicon-modifier-spin" : "codicon-play"}`} style={{ fontSize: 11 }} />
+            {defaultSafeRun ? "Run (Safe)" : "Run"}
+          </button>
+        </div>,
+        document.getElementById("report-toolbar-right")!
+      )}
+
         <div style={{ 
           display: "flex", alignItems: "center", height: 32, padding: "0 12px", 
           borderBottom: "1px solid #e8e8e8", background: "#fafafa" 
@@ -807,10 +938,12 @@ function ParameterInput({
   const relevantParamsKey = JSON.stringify(relevantParams);
 
   useEffect(() => {
-    if (ref && ds && activeConnectionId) {
-      const conn = connections.find(c => c.id === activeConnectionId);
-      
-      if (conn) {
+    const conn = connections.find(c => c.id === activeConnectionId);
+    if (!conn) {
+      return;
+    }
+    
+    if (ref && ds) {
         setLoading(true);
         invoke<QueryResult>("run_sql", {
           sql: ds.commandText,
@@ -834,7 +967,6 @@ function ParameterInput({
           setDynamicValues([]);
         }).finally(() => setLoading(false));
       }
-    }
   }, [ref?.dataSetName, activeConnectionId, relevantParamsKey]);
 
   const hasAvailable = p.availableValues && (p.availableValues.staticValues.length > 0 || p.availableValues.dataSetReference);
@@ -929,6 +1061,20 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
   ssrsPassword: string;
   onStatus: (l: string, r: string) => void;
 }) {
+  if (tab.source === "local") {
+    return (
+      <Centered>
+        <div style={{ textAlign: "center", padding: 40 }}>
+          <span className="codicon codicon-info" style={{ fontSize: 48, color: "#007acc", marginBottom: 16 }} />
+          <h2 style={{ fontSize: 18, fontWeight: 500, color: "#333", marginBottom: 8 }}>Preview Disabled for Local Files</h2>
+          <p style={{ fontSize: 13, color: "#666", maxWidth: 400, lineHeight: 1.5 }}>
+            This feature is currently disabled for local reports. Please open it from the <strong>Server</strong> panel or upload it to your SSRS server first.
+          </p>
+        </div>
+      </Centered>
+    );
+  }
+
   const [uploaded, setUploaded] = useState<UploadedReport | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1236,7 +1382,7 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
           {uploading && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#888" }}>
               <span className="codicon codicon-loading codicon-modifier-spin" style={{ fontSize: 16 }} />
-              {tab.source === "local" ? "Uploading to SSRS…" : "Connecting…"}
+              Connecting…
             </div>
           )}
 
@@ -1340,5 +1486,254 @@ function ResultTable({ result }: { result: QueryResult }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/* ─── SQL File View ────────────────────────────────────────────────────── */
+
+function SqlFileView({ path, connections, activeConnectionId, onStatus, defaultSafeRun }: {
+  path: string;
+  connections: DbConnection[];
+  activeConnectionId: string;
+  onStatus: (l: string, r: string) => void;
+  defaultSafeRun: boolean;
+}) {
+  const [sql, setSql] = useState("");
+  const [connId, setConnId] = useState(activeConnectionId || connections[0]?.id || "");
+  const [databases, setDatabases] = useState<string[]>([]);
+  const [selectedDb, setSelectedDb] = useState("");
+  const safeRun = defaultSafeRun;
+  
+  const [result, setResult] = useState<QueryResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editorHeight, setEditorHeight] = useState(300);
+  const [isResizing, setIsResizing] = useState(false);
+
+  const getInitialCatalog = (connStr: string) => {
+    const match = connStr.match(/(?:Initial Catalog|Database)=([^;]+)/i);
+    return match ? match[1].trim() : "";
+  };
+
+  useEffect(() => {
+    invoke<string>("read_text_file", { path })
+      .then(content => {
+        setSql(content);
+        setLoading(false);
+      })
+      .catch(e => {
+        setError(`Failed to read file: ${e}`);
+        setLoading(false);
+      });
+  }, [path]);
+
+  useEffect(() => {
+    const conn = connections.find(c => c.id === connId);
+    if (!conn) {
+      setDatabases([]);
+      setSelectedDb("");
+      return;
+    }
+
+    const initialDb = getInitialCatalog(conn.connectionString);
+    setSelectedDb(initialDb);
+
+    invoke<string[]>("get_databases", { connectionString: conn.connectionString })
+      .then(dbs => {
+        setDatabases(dbs);
+        if (initialDb && !dbs.some(d => d.toLowerCase() === initialDb.toLowerCase())) {
+          setDatabases(prev => [...new Set([initialDb, ...prev])].sort());
+        }
+      })
+      .catch(() => setDatabases([]));
+  }, [connId, connections]);
+
+  useHotkeys({
+    "ctrl+enter": handleRun,
+    "f5": handleRun,
+    "ctrl+s": handleSave,
+  });
+
+  async function handleRun() {
+    const trimmedSql = sql.trim();
+    if (!trimmedSql) return;
+    const conn = connections.find(c => c.id === connId);
+    if (!conn) return;
+
+    setRunning(true);
+    setError(null);
+    try {
+      const finalSql = safeRun 
+        ? `BEGIN TRANSACTION;\n${trimmedSql}\nROLLBACK;` 
+        : trimmedSql;
+
+      const res = await invoke<QueryResult>("run_sql", {
+        sql: finalSql,
+        connectionString: conn.connectionString,
+        params: {},
+        isStoredProc: false,
+        database: selectedDb || null,
+      });
+      setResult(res);
+      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${safeRun ? " (Safe)" : ""}`);
+    } catch (e: any) {
+      setError(String(e));
+      onStatus("", "Error");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function handleSave() {
+    try {
+      await invoke("write_text_file", { path, content: sql });
+      onStatus("File Saved", path.split(/[\\/]/).pop() || "");
+    } catch (e: any) {
+      alert(`Save failed: ${e}`);
+    }
+  }
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const newHeight = Math.max(100, e.clientY - 80);
+      setEditorHeight(newHeight);
+    };
+    const handleMouseUp = () => setIsResizing(false);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing]);
+
+  if (loading) return <Centered><span className="codicon codicon-loading codicon-modifier-spin" /></Centered>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fcfcfc" }}>
+      {/* Toolbar Left Portal - Connection & DB */}
+      {createPortal(
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span className="codicon codicon-server" style={{ fontSize: 13, color: "#666" }} title="Connection" />
+            <select 
+              style={{ 
+                fontSize: 12, height: 24, padding: "0 4px", 
+                borderRadius: 3, border: "1px solid #ccc",
+                background: "#fff", outline: "none", color: "#333",
+                minWidth: 90
+              }}
+              value={connId} 
+              onChange={e => setConnId(e.target.value)}
+            >
+              {connections.length === 0 && <option value="">—</option>}
+              {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          {databases.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span className="codicon codicon-database" style={{ fontSize: 13, color: "#666" }} title="Database Context" />
+              <select 
+                style={{ 
+                  fontSize: 12, height: 24, padding: "0 4px", 
+                  borderRadius: 3, border: "1px solid #ccc",
+                  background: "#fff", outline: "none", color: "#333",
+                  minWidth: 100
+                }}
+                value={selectedDb} 
+                onChange={e => setSelectedDb(e.target.value)}
+              >
+                {databases.map(db => <option key={db} value={db}>{db}</option>)}
+              </select>
+            </div>
+          )}
+        </div>,
+        document.getElementById("report-toolbar-left")!
+      )}
+
+      {/* Toolbar Right Portal - Run & Save */}
+      {createPortal(
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button 
+            onClick={handleRun} 
+            disabled={running}
+            className="btn-primary"
+            style={{ 
+              height: 24, fontSize: 11, padding: "0 10px", borderRadius: 3,
+              display: "flex", alignItems: "center", gap: 5, fontWeight: 600,
+              background: safeRun ? "#28a745" : "#00539c"
+            }}
+          >
+            <span className={`codicon ${running ? "codicon-loading codicon-modifier-spin" : "codicon-play"}`} style={{ fontSize: 11 }} />
+            {safeRun ? "Run (Safe)" : "Run"}
+          </button>
+
+          <button 
+            onClick={handleSave}
+            style={{ 
+              height: 24, fontSize: 11, padding: "0 10px", borderRadius: 3,
+              background: "#fff", border: "1px solid #ccc", cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 5, color: "#333"
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = "#f0f0f0"}
+            onMouseLeave={e => e.currentTarget.style.background = "#fff"}
+          >
+            <span className="codicon codicon-save" style={{ fontSize: 11, color: "#666" }} />
+            Save
+          </button>
+        </div>,
+        document.getElementById("report-toolbar-right")!
+      )}
+
+      {/* Editor */}
+      <div style={{ height: editorHeight, borderBottom: "1px solid #ddd", position: "relative" }}>
+        <Editor
+          height="100%"
+          defaultLanguage="sql"
+          value={sql}
+          onChange={val => setSql(val || "")}
+          theme="vs"
+          options={{
+            minimap: { enabled: false },
+            fontSize: 13,
+            fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+            automaticLayout: true,
+            scrollBeyondLastLine: false,
+          }}
+        />
+        <div
+          onMouseDown={() => setIsResizing(true)}
+          style={{
+            position: "absolute", bottom: -3, left: 0, right: 0, height: 6,
+            cursor: "ns-resize", zIndex: 10,
+          }}
+        />
+      </div>
+
+      {/* Results */}
+      <div style={{ flex: 1, overflow: "auto", position: "relative" }}>
+        {error && (
+          <div style={{ padding: 15, color: "#c00", fontSize: 13, whiteSpace: "pre-wrap", fontFamily: "monospace" }}>
+            {error}
+          </div>
+        )}
+        {!error && !result && !running && (
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#aaa", fontSize: 13 }}>
+            Press F5 to run query
+          </div>
+        )}
+        {!error && result && (
+          <ResultTable result={result} />
+        )}
+        {running && (
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span className="codicon codicon-loading codicon-modifier-spin" style={{ fontSize: 24, color: "#aaa" }} />
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
