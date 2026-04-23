@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import "./index.css";
 import { useSettings } from "./hooks/useSettings";
 import { useTabs } from "./hooks/useTabs";
@@ -24,7 +26,7 @@ export default function App() {
 
   const { 
     tabs, activeId, activeTab, openTab, closeTab, closeTabsByPath, 
-    setTabView, setActiveId, closeOthers, closeToRight, closeAll 
+    setTabView, setActiveId, updateTabMetadata, closeOthers, closeToRight, closeAll 
   } = useTabs();
   const [status, setStatus] = useState({ left: "", right: "" });
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -43,6 +45,40 @@ export default function App() {
       if (activeId) closeTab(activeId);
     }
   });
+  
+  const [reloadCounter, setReloadCounter] = useState(0);
+
+  // File change detection for tabs
+  useEffect(() => {
+    const handleFocus = async () => {
+      if (settings.lastSection === "sqleditor") return; // Handled in SqlEditorPanel
+      if (!activeTab || activeTab.source !== "local" || !activeTab.lastModified) return;
+
+      try {
+        const mtime = await invoke<number>("get_file_modified_time", { path: activeTab.path });
+        if (mtime > activeTab.lastModified) {
+          const fileName = activeTab.path.split(/[\\/]/).pop();
+          const confirmed = await ask(
+            `File "${fileName}" has been modified by another editor. Do you want to reload it?`,
+            { title: "File Changed", kind: "warning" }
+          );
+
+          if (confirmed) {
+            updateTabMetadata(activeTab.id, { lastModified: mtime });
+            setReloadCounter(c => c + 1);
+          } else {
+            // Update timestamp anyway to stop asking until next change
+            updateTabMetadata(activeTab.id, { lastModified: mtime });
+          }
+        }
+      } catch (e) {
+        console.error("Focus check failed", e);
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [activeTab, settings.lastSection, updateTabMetadata]);
 
   function handleSectionChange(newSection: Section) {
     if (newSection === settings.lastSection) {
@@ -155,7 +191,7 @@ export default function App() {
               <div className="flex-1 overflow-hidden">
                 {activeTab ? (
                   <ReportTabContent
-                    key={activeTab.id}
+                    key={`${activeTab.id}-${reloadCounter}`}
                     tab={activeTab}
                     connections={settings.connections}
                     activeConnectionId={settings.activeConnectionId}

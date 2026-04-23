@@ -150,6 +150,16 @@ fn read_text_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_file_modified_time(path: String) -> Result<u64, String> {
+    let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let modified = metadata.modified().map_err(|e| e.to_string())?;
+    Ok(modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis() as u64)
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
@@ -253,6 +263,7 @@ pub fn run() {
             reveal_in_explorer,
             read_text_file,
             write_text_file,
+            get_file_modified_time,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

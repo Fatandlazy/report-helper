@@ -8,6 +8,7 @@ export interface ReportTab {
   source: "local" | "server";
   serverPath?: string;   // original SSRS path for preview URL
   activeView: TabView;
+  lastModified?: number; // timestamp of file on disk
 }
 
 export interface WorkspaceFolder {

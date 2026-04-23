@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { save as saveFileDialog, ask } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
 import { DbConnection, QueryResult, WorkspaceFolder, SAMPLE_SQL } from "../types";
 import { useCallback } from "react";
@@ -25,6 +25,7 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
   const [connId, setConnId] = useState(connections[0]?.id ?? "");
   const [sql, setSql] = useState(SAMPLE_SQL);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
+  const [lastModified, setLastModified] = useState<number | null>(null);
   const [folderFiles, setFolderFiles] = useState<Record<string, string[]>>({});
   const [isSample, setIsSample] = useState(true);
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -200,6 +201,35 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
     }
   }
 
+  // File change detection
+  useEffect(() => {
+    const handleFocus = async () => {
+      if (!activeFilePath || !lastModified) return;
+
+      try {
+        const mtime = await invoke<number>("get_file_modified_time", { path: activeFilePath });
+        if (mtime > lastModified) {
+          const fileName = activeFilePath.split(/[\\/]/).pop();
+          const confirmed = await ask(
+            `File "${fileName}" has been modified by another editor. Do you want to reload it?`,
+            { title: "File Changed", kind: "warning" }
+          );
+
+          if (confirmed) {
+            handleOpenFile(activeFilePath);
+          } else {
+            setLastModified(mtime);
+          }
+        }
+      } catch (e) {
+        console.error("Focus check failed", e);
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [activeFilePath, lastModified]);
+
   function handleNewSql() {
     setSql(SAMPLE_SQL);
     setActiveFilePath(null);
@@ -223,7 +253,9 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
 
     try {
       await invoke("write_text_file", { path: targetPath, content: sql });
+      const mtime = await invoke<number>("get_file_modified_time", { path: targetPath });
       setActiveFilePath(targetPath);
+      setLastModified(mtime);
       setIsSample(false);
       onStatus("Saved", targetPath.split(/[\\/]/).pop() || "");
       
@@ -295,8 +327,10 @@ export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection,
   async function handleOpenFile(path: string) {
     try {
       const content = await invoke<string>("read_text_file", { path });
+      const mtime = await invoke<number>("get_file_modified_time", { path });
       setSql(content);
       setActiveFilePath(path);
+      setLastModified(mtime);
       setIsSample(false);
       onStatus("Loaded", path.split(/[\\/]/).pop() || "");
     } catch (e) {

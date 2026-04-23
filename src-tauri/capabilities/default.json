@@ -18,6 +18,7 @@
     "fs:allow-lstat",
     "fs:allow-stat",
     "fs:allow-mkdir",
+    "window-state:default",
     "core:path:default"
   ]
 }

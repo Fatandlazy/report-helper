@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { ReportTab, TabView } from "../types";
 
 interface TabsState {
@@ -9,13 +10,22 @@ interface TabsState {
 export function useTabs() {
   const [state, setState] = useState<TabsState>({ tabs: [], activeId: null });
 
-  const openTab = useCallback((
+  const openTab = useCallback(async (
     path: string,
     title: string,
     source: "local" | "server",
     serverPath?: string,
     initialView: TabView = "overview",
   ) => {
+    let lastModified: number | undefined;
+    if (source === "local") {
+      try {
+        lastModified = await invoke<number>("get_file_modified_time", { path });
+      } catch (e) {
+        console.error("Failed to get mtime", e);
+      }
+    }
+
     setState(prev => {
       const existing = prev.tabs.find(t => 
         (serverPath && t.serverPath === serverPath) ||
@@ -29,6 +39,7 @@ export function useTabs() {
         source,
         serverPath,
         activeView: initialView,
+        lastModified,
       };
       return { tabs: [...prev.tabs, tab], activeId: tab.id };
     });
@@ -76,6 +87,13 @@ export function useTabs() {
     setState(prev => ({ ...prev, activeId: id }));
   }, []);
 
+  const updateTabMetadata = useCallback((id: string, metadata: Partial<ReportTab>) => {
+    setState(prev => ({
+      ...prev,
+      tabs: prev.tabs.map(t => t.id === id ? { ...t, ...metadata } : t),
+    }));
+  }, []);
+
   const closeOthers = useCallback((id: string) => {
     setState(prev => ({
       tabs: prev.tabs.filter(t => t.id === id),
@@ -108,6 +126,7 @@ export function useTabs() {
     closeTabsByPath, 
     setTabView, 
     setActiveId,
+    updateTabMetadata,
     closeOthers,
     closeToRight,
     closeAll
