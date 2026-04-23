@@ -638,6 +638,9 @@ export function SqlEditorPanel({
               editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
                 handleRun();
               });
+              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                handleSaveSql();
+              });
             }}
             options={{
               minimap: { enabled: false },

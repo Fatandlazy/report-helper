@@ -491,6 +491,16 @@ function DatasetCard({ dataset, isEditMode, rdlPath, onRefresh, onUpdateTabMetad
             value={editedSql}
             onChange={(val) => setEditedSql(val || "")}
             theme="vs"
+            onMount={(editor, monaco) => {
+              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                if (isEditMode) {
+                  // Simulate click on save button or call handleSave
+                  // Since handleSave is in the same scope, we can just call it
+                  // But wait, handleSave takes an event. We can pass a dummy one or refactor.
+                  handleSave({ stopPropagation: () => {} } as any);
+                }
+              });
+            }}
             options={{
               readOnly: !isEditMode,
               minimap: { enabled: false },
@@ -595,6 +605,7 @@ function SqlTesterView({
   useHotkeys({
     "ctrl+enter": handleRun,
     "f5": handleRun,
+    "ctrl+s": handleSave,
   });
 
   const getInitialCatalog = (connStr: string) => {
@@ -969,6 +980,13 @@ function SqlTesterView({
                   }
                 }}
                 theme="vs"
+                onMount={(editor, monaco) => {
+                  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                    if (isEditMode && sqlMode === "raw") {
+                      handleSave();
+                    }
+                  });
+                }}
                 options={{
                   readOnly: !isEditMode || sqlMode !== "raw",
                   minimap: { enabled: false },
@@ -1720,7 +1738,7 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
   }, [path]);
 
   useEffect(() => {
-    if (!loading && originalSql !== "") {
+    if (!loading) {
       onUpdateTabMetadata(tab.id, { isDirty: sql !== originalSql });
     }
   }, [sql, originalSql, tab.id, loading]);
@@ -1786,7 +1804,8 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
     try {
       await invoke("write_text_file", { path, content: sql });
       const mtime = await invoke<number>("get_file_modified_time", { path });
-      onUpdateTabMetadata(tab.id, { lastModified: mtime });
+      setOriginalSql(sql);
+      onUpdateTabMetadata(tab.id, { lastModified: mtime, isDirty: false });
       onStatus("File Saved", path.split(/[\\/]/).pop() || "");
     } catch (e: any) {
       alert(`Save failed: ${e}`);
@@ -1895,6 +1914,11 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
           value={sql}
           onChange={val => setSql(val || "")}
           theme="vs"
+          onMount={(editor, monaco) => {
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+              handleSave();
+            });
+          }}
           options={{
             minimap: { enabled: false },
             fontSize: 13,
