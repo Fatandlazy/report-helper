@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from "react";
 import { ReportTab } from "../types";
 
 interface Props {
@@ -5,10 +6,27 @@ interface Props {
   activeId: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onCloseOthers: (id: string) => void;
+  onCloseToRight: (id: string) => void;
+  onCloseAll: () => void;
 }
 
-export function TabBar({ tabs, activeId, onSelect, onClose }: Props) {
+export function TabBar({ tabs, activeId, onSelect, onClose, onCloseOthers, onCloseToRight, onCloseAll }: Props) {
+  const [menu, setMenu] = useState<{ x: number, y: number, tabId: string } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = () => setMenu(null);
+    window.addEventListener("click", handleClick);
+    return () => window.removeEventListener("click", handleClick);
+  }, []);
+
   if (tabs.length === 0) return null;
+
+  const handleContextMenu = (e: React.MouseEvent, tabId: string) => {
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY, tabId });
+  };
 
   return (
     <div
@@ -29,6 +47,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose }: Props) {
           <div
             key={tab.id}
             onClick={() => onSelect(tab.id)}
+            onContextMenu={(e) => handleContextMenu(e, tab.id)}
             style={{
               display: "flex",
               alignItems: "center",
@@ -100,6 +119,42 @@ export function TabBar({ tabs, activeId, onSelect, onClose }: Props) {
           </div>
         );
       })}
+      {menu && (
+        <div 
+          ref={menuRef}
+          style={{
+            position: "fixed", top: menu.y, left: menu.x,
+            background: "#fff", border: "1px solid #ccc",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+            borderRadius: 4, padding: "4px 0", zIndex: 1000,
+            minWidth: 160,
+          }}
+        >
+          <MenuButton onClick={() => { onClose(menu.tabId); setMenu(null); }} label="Close" />
+          <div style={{ height: 1, background: "#eee", margin: "4px 0" }} />
+          <MenuButton onClick={() => { onCloseOthers(menu.tabId); setMenu(null); }} label="Close Others" />
+          <MenuButton onClick={() => { onCloseToRight(menu.tabId); setMenu(null); }} label="Close to the Right" />
+          <MenuButton onClick={() => { onCloseAll(); setMenu(null); }} label="Close All" />
+        </div>
+      )}
     </div>
+  );
+}
+
+function MenuButton({ onClick, label }: { onClick: () => void, label: string }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "block", width: "100%", textAlign: "left",
+        padding: "6px 12px", border: "none", background: hover ? "#0078d4" : "transparent",
+        color: hover ? "#fff" : "#333", fontSize: 13, cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
   );
 }

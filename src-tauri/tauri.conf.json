@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SSRS Report Manager",
+  "productName": "ReportHelper",
   "version": "0.1.0",
-  "identifier": "com.thuantd.reporting-tools-tauri",
+  "identifier": "com.thuantd.report-helper",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "SSRS Report Manager",
+        "title": "ReportHelper",
         "width": 1200,
         "height": 720,
         "minWidth": 900,

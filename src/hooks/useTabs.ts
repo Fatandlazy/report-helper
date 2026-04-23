@@ -76,7 +76,40 @@ export function useTabs() {
     setState(prev => ({ ...prev, activeId: id }));
   }, []);
 
+  const closeOthers = useCallback((id: string) => {
+    setState(prev => ({
+      tabs: prev.tabs.filter(t => t.id === id),
+      activeId: id
+    }));
+  }, []);
+
+  const closeToRight = useCallback((id: string) => {
+    setState(prev => {
+      const idx = prev.tabs.findIndex(t => t.id === id);
+      if (idx === -1) return prev;
+      const next = prev.tabs.slice(0, idx + 1);
+      const newActiveId = next.some(t => t.id === prev.activeId) ? prev.activeId : id;
+      return { tabs: next, activeId: newActiveId };
+    });
+  }, []);
+
+  const closeAll = useCallback(() => {
+    setState({ tabs: [], activeId: null });
+  }, []);
+
   const activeTab = state.tabs.find(t => t.id === state.activeId) ?? null;
 
-  return { tabs: state.tabs, activeId: state.activeId, activeTab, openTab, closeTab, closeTabsByPath, setTabView, setActiveId };
+  return { 
+    tabs: state.tabs, 
+    activeId: state.activeId, 
+    activeTab, 
+    openTab, 
+    closeTab, 
+    closeTabsByPath, 
+    setTabView, 
+    setActiveId,
+    closeOthers,
+    closeToRight,
+    closeAll
+  };
 }

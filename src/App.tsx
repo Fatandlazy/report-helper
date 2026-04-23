@@ -22,7 +22,10 @@ export default function App() {
     toggleHiddenSsrsPath, importSettings,
   } = useSettings();
 
-  const { tabs, activeId, activeTab, openTab, closeTab, closeTabsByPath, setTabView, setActiveId } = useTabs();
+  const { 
+    tabs, activeId, activeTab, openTab, closeTab, closeTabsByPath, 
+    setTabView, setActiveId, closeOthers, closeToRight, closeAll 
+  } = useTabs();
   const [status, setStatus] = useState({ left: "", right: "" });
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [ssrsTree, setSsrsTree] = useState<TreeNode[]>([]);
@@ -49,6 +52,7 @@ export default function App() {
       setSidebarVisible(true);
     }
   }
+
 
   function onStatus(left: string, right: string) {
     setStatus({ left, right });
@@ -144,6 +148,9 @@ export default function App() {
                 activeId={activeId}
                 onSelect={setActiveId}
                 onClose={closeTab}
+                onCloseOthers={closeOthers}
+                onCloseToRight={closeToRight}
+                onCloseAll={closeAll}
               />
               <div className="flex-1 overflow-hidden">
                 {activeTab ? (
