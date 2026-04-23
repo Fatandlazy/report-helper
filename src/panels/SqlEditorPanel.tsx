@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
-import { DbConnection, QueryResult } from "../types";
+import { DbConnection, QueryResult, WorkspaceFolder, SAMPLE_SQL } from "../types";
+import { useCallback } from "react";
 
 interface Props {
   connections: DbConnection[];
+  workspaceFolders: WorkspaceFolder[];
   onAddConnection: (conn: DbConnection) => void;
   onRemoveConnection: (id: string) => void;
   onUpdateConnection: (conn: DbConnection) => void;
@@ -12,31 +15,88 @@ interface Props {
   sidebarVisible: boolean;
 }
 
-const SAMPLE_SQL = `SELECT
-    DB_NAME()        AS current_database,
-    SUSER_SNAME()    AS current_login,
-    @@VERSION        AS sql_server_version,
-    GETDATE()        AS server_time;`;
 
 type FormMode = "add" | "edit" | null;
 type TestState = "idle" | "testing" | "ok" | "fail";
 
-export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnection, onUpdateConnection, onStatus, sidebarVisible }: Props) {
+export function SqlEditorPanel({ connections, workspaceFolders, onAddConnection, onRemoveConnection, onUpdateConnection, onStatus, sidebarVisible }: Props) {
   const [connId, setConnId] = useState(connections[0]?.id ?? "");
   const [sql, setSql] = useState(SAMPLE_SQL);
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
+  const [folderFiles, setFolderFiles] = useState<Record<string, string[]>>({});
   const [isSample, setIsSample] = useState(true);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editorHeight, setEditorHeight] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+
+  const toggleFolder = (path: string) => {
+    setCollapsedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
   const [schema, setSchema] = useState<{ tables: string[], columns: string[] }>({ tables: [], columns: [] });
   const schemaRef = useRef(schema);
   const completionProviderRef = useRef<any>(null);
 
+  const [databases, setDatabases] = useState<string[]>([]);
+  const [selectedDb, setSelectedDb] = useState<string>("");
+
+  const getInitialCatalog = (connStr: string) => {
+    const match = connStr.match(/(?:Initial Catalog|Database)=([^;]+)/i);
+    return match ? match[1].trim() : "";
+  };
+
+  useEffect(() => {
+    const conn = connections.find(c => c.id === connId);
+    if (!conn) {
+      setDatabases([]);
+      setSelectedDb("");
+      return;
+    }
+
+    const initialDb = getInitialCatalog(conn.connectionString);
+    setSelectedDb(initialDb);
+
+    invoke<string[]>("get_databases", { connectionString: conn.connectionString })
+      .then(dbs => {
+        setDatabases(dbs);
+        // Ensure the initial DB from connection string is in the list
+        if (initialDb && !dbs.some(d => d.toLowerCase() === initialDb.toLowerCase())) {
+          setDatabases(prev => [...new Set([initialDb, ...prev])].sort());
+        }
+      })
+      .catch(err => {
+        console.error("Failed to fetch databases", err);
+        setDatabases([]);
+      });
+  }, [connId, connections]);
+
   useEffect(() => {
     schemaRef.current = schema;
   }, [schema]);
+
+  const scanFolder = useCallback(async (folderPath: string) => {
+    try {
+      const files = await invoke<string[]>("scan_folder", { path: folderPath });
+      // Only keep .sql files
+      const sqlFiles = files.filter(f => !f.endsWith("/") && f.toLowerCase().endsWith(".sql"));
+      setFolderFiles(prev => ({ ...prev, [folderPath]: sqlFiles }));
+    } catch (e) {
+      console.error("scan failed", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    workspaceFolders.forEach(wf => {
+      if (!folderFiles[wf.path]) scanFolder(wf.path);
+    });
+  }, [workspaceFolders, scanFolder]);
 
   useEffect(() => {
     const conn = connections.find(c => c.id === connId);
@@ -101,25 +161,67 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
   const [testMsg, setTestMsg] = useState("");
 
   async function handleRun() {
-    if (!sql.trim()) return;
+    const trimmedSql = sql.trim();
+    if (!trimmedSql) return;
     const conn = connections.find(c => c.id === connId);
     if (!conn) return;
+
     setRunning(true);
     setError(null);
     try {
+      // Always use Safe Run (Transaction + Rollback)
+      const finalSql = `BEGIN TRANSACTION;\n${trimmedSql}\nROLLBACK;`;
+
       const res = await invoke<QueryResult>("run_sql", {
-        sql: sql.trim(),
+        sql: finalSql,
         connectionString: conn.connectionString,
         params: {},
         isStoredProc: false,
+        database: selectedDb || null,
       });
       setResult(res);
-      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms`);
+      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms (Safe Run)`);
     } catch (e: any) {
       setError(String(e));
       onStatus("", "Error");
     } finally {
       setRunning(false);
+    }
+  }
+
+  function handleNewSql() {
+    setSql(SAMPLE_SQL);
+    setActiveFilePath(null);
+    setIsSample(true);
+    setResult(null);
+    setError(null);
+  }
+
+  async function handleSaveSql() {
+    let targetPath = activeFilePath;
+    
+    if (!targetPath) {
+      // New file, prompt for location
+      const selected = await saveFileDialog({
+        filters: [{ name: "SQL", extensions: ["sql"] }],
+        defaultPath: "query.sql"
+      });
+      if (!selected) return;
+      targetPath = selected;
+    }
+
+    try {
+      await invoke("write_text_file", { path: targetPath, content: sql });
+      setActiveFilePath(targetPath);
+      setIsSample(false);
+      onStatus("Saved", targetPath.split(/[\\/]/).pop() || "");
+      
+      // Refresh folder scan if it's in a workspace
+      workspaceFolders.forEach(wf => {
+        if (targetPath?.startsWith(wf.path)) scanFolder(wf.path);
+      });
+    } catch (e) {
+      alert(`Failed to save: ${e}`);
     }
   }
 
@@ -157,6 +259,7 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
         connectionString: formConnStr.trim(),
         params: {},
         isStoredProc: false,
+        database: null,
       });
       setTestState("ok");
       setTestMsg("Connection successful");
@@ -176,6 +279,18 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
       onUpdateConnection({ id: formId, name: formName.trim(), connectionString: formConnStr.trim() });
     }
     closeForm();
+  }
+
+  async function handleOpenFile(path: string) {
+    try {
+      const content = await invoke<string>("read_text_file", { path });
+      setSql(content);
+      setActiveFilePath(path);
+      setIsSample(false);
+      onStatus("Loaded", path.split(/[\\/]/).pop() || "");
+    } catch (e) {
+      alert(`Failed to read file: ${e}`);
+    }
   }
 
 
@@ -283,7 +398,64 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
           ))}
         </div>
 
-        <div style={{ padding: "8px 12px" }}>
+        {/* ── Side: SQL Files ── */}
+        <div style={{ flex: 1, overflowY: "auto", borderTop: "1px solid #e0e0e0" }}>
+          <div style={{ padding: "10px 12px 4px 12px" }}>
+            <span className="section-label">SQL Files</span>
+          </div>
+          
+          {workspaceFolders.map(wf => (
+            <div key={wf.path}>
+              <div 
+                onClick={() => toggleFolder(wf.path)}
+                style={{ 
+                  padding: "6px 12px", background: "#e8e8e8", fontSize: 11, fontWeight: 600, 
+                  color: "#666", textTransform: "uppercase", letterSpacing: "0.05em",
+                  display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+                  userSelect: "none"
+                }}
+              >
+                <span 
+                  className={`codicon codicon-chevron-${collapsedFolders.has(wf.path) ? "right" : "down"}`} 
+                  style={{ fontSize: 12, color: "#666", flexShrink: 0 }} 
+                />
+                <span className="codicon codicon-folder" style={{ fontSize: 12 }} />
+                {wf.name}
+              </div>
+              {!collapsedFolders.has(wf.path) && (
+                <div style={{ padding: "2px 0" }}>
+                  {(folderFiles[wf.path] || []).length === 0 && (
+                    <div style={{ padding: "6px 24px", fontSize: 12, color: "#aaa" }}>No SQL files found</div>
+                  )}
+                  {(folderFiles[wf.path] || []).map(path => {
+                    const name = path.split(/[\\/]/).pop() || path;
+                    const isActive = path === activeFilePath;
+                    return (
+                      <button
+                        key={path}
+                        onClick={() => handleOpenFile(path)}
+                        style={{
+                          width: "100%", textAlign: "left", padding: "4px 20px",
+                          background: isActive ? "#d6ebff" : "transparent",
+                          color: isActive ? "#00539c" : "#333",
+                          fontSize: 13, display: "flex", alignItems: "center", gap: 6,
+                          border: "none", cursor: "pointer"
+                        }}
+                        onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = "rgba(0,0,0,0.04)"; }}
+                        onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+                      >
+                        <span className="codicon codicon-database" style={{ fontSize: 14, color: isActive ? "#00539c" : "#e38100" }} />
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: "8px 12px", borderTop: "1px solid #e0e0e0" }}>
           <span style={{ fontSize: 11, color: "#aaa" }}>Ctrl+Enter to run</span>
         </div>
       </div>
@@ -294,26 +466,69 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
 
         {/* Toolbar */}
         <div style={{
-          display: "flex", alignItems: "center", gap: 8,
+          display: "flex", alignItems: "center", gap: 12,
           padding: "6px 12px", borderBottom: "1px solid #e8e8e8", background: "#fafafa", flexShrink: 0,
         }}>
-          <select
-            value={connId}
-            onChange={e => setConnId(e.target.value)}
-            style={{ width: 200 }}
-          >
-            {connections.length === 0 && <option value="">— add a connection first —</option>}
-            {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          <button
-            onClick={handleRun}
-            disabled={running || !sql.trim() || !connId}
-            className="btn-primary"
-            style={{ borderRadius: 2, padding: "4px 12px" }}
-          >
-            <span className="codicon codicon-play" style={{ fontSize: 13 }} />
-            {running ? "Running…" : "Run"}
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={handleNewSql}
+              title="New SQL Query"
+              className="btn-secondary"
+              style={{ padding: "4px 8px", borderRadius: 2 }}
+            >
+              <span className="codicon codicon-new-file" style={{ fontSize: 13 }} />
+              <span style={{ fontSize: 12 }}>New</span>
+            </button>
+            <button
+              onClick={handleSaveSql}
+              title="Save (Ctrl+S)"
+              className="btn-secondary"
+              style={{ padding: "4px 8px", borderRadius: 2 }}
+            >
+              <span className="codicon codicon-save" style={{ fontSize: 13 }} />
+              <span style={{ fontSize: 12 }}>Save</span>
+            </button>
+          </div>
+
+          <div style={{ height: 16, width: 1, background: "#ddd" }} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <select
+              value={connId}
+              onChange={e => setConnId(e.target.value)}
+              style={{ width: 200 }}
+            >
+              {connections.length === 0 && <option value="">— add connection —</option>}
+              {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          {databases.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <select
+                value={selectedDb}
+                onChange={e => setSelectedDb(e.target.value)}
+                style={{ width: 150 }}
+                title="Select Database Context"
+              >
+                {databases.map(db => (
+                  <option key={db} value={db}>{db}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+            <button
+              onClick={handleRun}
+              disabled={running || !sql.trim() || !connId}
+              className="btn-primary"
+              style={{ borderRadius: 2, padding: "4px 20px", background: "#28a745" }}
+            >
+              <span className="codicon codicon-play" style={{ fontSize: 13 }} />
+              {running ? "Running…" : "Run (Safe)"}
+            </button>
+          </div>
         </div>
 
         {/* SQL Monaco Editor */}
@@ -362,7 +577,7 @@ export function SqlEditorPanel({ connections, onAddConnection, onRemoveConnectio
               });
 
               editor.onDidFocusEditorText(() => {
-                if (isSample) {
+                if (editor.getValue() === SAMPLE_SQL) {
                   setSql("");
                   setIsSample(false);
                 }

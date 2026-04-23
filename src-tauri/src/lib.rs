@@ -21,8 +21,14 @@ async fn run_sql(
     connection_string: String,
     params: HashMap<String, Option<String>>,
     is_stored_proc: bool,
+    database: Option<String>,
 ) -> Result<QueryResult, String> {
-    sql::run_sql(&sql, &connection_string, params, is_stored_proc).await
+    sql::run_sql(&sql, &connection_string, params, is_stored_proc, database).await
+}
+
+#[tauri::command]
+async fn get_databases(connection_string: String) -> Result<Vec<String>, String> {
+    sql::get_databases(&connection_string).await
 }
 
 #[tauri::command]
@@ -139,6 +145,16 @@ fn scan_dir(dir: &Path, results: &mut Vec<String>) -> std::io::Result<()> {
 }
 
 #[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn write_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn fs_create_dir(path: String) -> Result<(), String> {
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())
 }
@@ -220,6 +236,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             parse_rdl,
             run_sql,
+            get_databases,
             ssrs_get_items,
             ssrs_download_rdl,
             ssrs_preview_url,
@@ -233,6 +250,8 @@ pub fn run() {
             fs_remove,
             fs_move,
             reveal_in_explorer,
+            read_text_file,
+            write_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

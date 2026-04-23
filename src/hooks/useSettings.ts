@@ -81,7 +81,10 @@ export function useSettings() {
         : [...prev.hiddenSsrsPaths, path],
     }));
   }
-
+  function importSettings(newSettings: AppSettings) {
+    setSettings(newSettings);
+  }
+  
   return {
     settings,
     updateSettings,
@@ -92,5 +95,6 @@ export function useSettings() {
     updateConnection,
     setSection,
     toggleHiddenSsrsPath,
+    importSettings,
   };
 }

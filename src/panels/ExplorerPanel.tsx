@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { WorkspaceFolder, FileTreeNode } from "../types";
+import { WorkspaceFolder, FileTreeNode, SAMPLE_SQL } from "../types";
 
 interface Props {
   workspaceFolders: WorkspaceFolder[];
@@ -127,7 +127,7 @@ function FileTreeView({
   depth?: number;
   activeFilePath: string | null;
   onOpenFile: (path: string, name: string) => void;
-  onAction: (action: "newFolder" | "rename" | "delete" | "reveal" | "refresh", path: string) => void;
+  onAction: (action: "newFolder" | "newSql" | "rename" | "delete" | "reveal" | "refresh", path: string) => void;
   onMove: (oldPath: string, newParentPath: string) => void;
   renamingPath: string | null;
   onRenameComplete: (newName: string) => void;
@@ -245,7 +245,7 @@ function FileTreeView({
 
 function ContextMenu({ x, y, node, isRoot, onAction, onClose }: { 
   x: number, y: number, node: FileTreeNode | null, isRoot: boolean,
-  onAction: (action: "newFolder" | "rename" | "delete" | "reveal" | "refresh", path: string) => void,
+  onAction: (action: "newFolder" | "newSql" | "rename" | "delete" | "reveal" | "refresh", path: string) => void,
   onClose: () => void 
 }) {
   if (!node) return null;
@@ -253,9 +253,15 @@ function ContextMenu({ x, y, node, isRoot, onAction, onClose }: {
   return (
     <div className="context-menu" style={{ left: `${x}px`, top: `${y}px` }} onClick={e => e.stopPropagation()}>
       {node.isFolder && (
-        <div className="context-menu-item" onClick={() => { onAction("newFolder", node.path); onClose(); }}>
-          <span className="codicon codicon-new-folder" /> New Folder
-        </div>
+        <>
+          <div className="context-menu-item" onClick={() => { onAction("newFolder", node.path); onClose(); }}>
+            <span className="codicon codicon-new-folder" /> New Folder
+          </div>
+          <div className="context-menu-item" onClick={() => { onAction("newSql", node.path); onClose(); }}>
+            <span className="codicon codicon-database" /> New SQL
+          </div>
+          <div className="context-menu-divider" />
+        </>
       )}
       {!isRoot && (
         <div className="context-menu-item" onClick={() => { onAction("rename", node.path); onClose(); }}>
@@ -283,6 +289,16 @@ function ContextMenu({ x, y, node, isRoot, onAction, onClose }: {
 export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, onOpenFile, activeFilePath, onCloseTabsByPath }: Props) {
   const [folderFiles, setFolderFiles] = useState<Record<string, string[]>>({});
   const [search, setSearch] = useState("");
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+
+  const toggleFolder = (path: string) => {
+    setCollapsedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [creatingFolderParent, setCreatingFolderParent] = useState<string | null>(null);
@@ -318,7 +334,7 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
     };
   }, []);
 
-  const handleAction = async (action: "newFolder" | "rename" | "delete" | "reveal" | "refresh", path: string) => {
+  const handleAction = async (action: "newFolder" | "newSql" | "rename" | "delete" | "reveal" | "refresh", path: string) => {
     console.log("Action triggered:", action, path);
     const normPath = path.replace(/\\/g, "/").replace(/\/$/, "");
 
@@ -332,6 +348,9 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
     if (action === "newFolder") {
       setCreatingFolderParent(normPath);
       setRenamingPath(normPath + "/$NEW$");
+    } else if (action === "newSql") {
+      setCreatingFolderParent(normPath);
+      setRenamingPath(normPath + "/$NEW_SQL$");
     } else if (action === "rename") {
       setRenamingPath(path);
     } else if (action === "delete") {
@@ -351,24 +370,41 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
   const handleRenameComplete = async (newName: string) => {
     if (!renamingPath) return;
     const oldPath = renamingPath;
-    const isNew = oldPath.endsWith("/$NEW$");
     setRenamingPath(null);
     setCreatingFolderParent(null);
 
-    if (isNew) {
-      if (!newName.trim()) return; // Cancel if empty
-      const parentPath = oldPath.replace(/\/\$NEW\$/, "");
-      const newPath = parentPath.endsWith("/") ? `${parentPath}${newName}` : `${parentPath}/${newName}`;
-      try {
-        await invoke("fs_create_dir", { path: newPath });
-        workspaceFolders.forEach(wf => {
-          if (newPath.replace(/\\/g, "/").startsWith(wf.path.replace(/\\/g, "/"))) scanFolder(wf.path);
-        });
-      } catch (e) {
-        alert(`Failed to create folder: ${e}`);
+      if (oldPath.endsWith("/$NEW$")) {
+        // Folder creation
+        if (!newName.trim()) return;
+        const parentPath = oldPath.replace(/\/\$NEW\$/, "");
+        const newPath = parentPath.endsWith("/") ? `${parentPath}${newName}` : `${parentPath}/${newName}`;
+        try {
+          await invoke("fs_create_dir", { path: newPath });
+          workspaceFolders.forEach(wf => {
+            if (newPath.replace(/\\/g, "/").startsWith(wf.path.replace(/\\/g, "/"))) scanFolder(wf.path);
+          });
+        } catch (e) {
+          alert(`Failed to create folder: ${e}`);
+        }
+      } else if (oldPath.endsWith("/$NEW_SQL$")) {
+        // SQL File creation
+        if (!newName.trim()) return;
+        let finalName = newName.trim();
+        if (!finalName.toLowerCase().endsWith(".sql")) finalName += ".sql";
+        
+        const parentPath = oldPath.replace(/\/\$NEW_SQL\$/, "");
+        const newPath = parentPath.endsWith("/") ? `${parentPath}${finalName}` : `${parentPath}/${finalName}`;
+        try {
+          await invoke("write_text_file", { path: newPath, content: SAMPLE_SQL });
+          workspaceFolders.forEach(wf => {
+            if (newPath.replace(/\\/g, "/").startsWith(wf.path.replace(/\\/g, "/"))) scanFolder(wf.path);
+          });
+          onOpenFile(newPath, finalName);
+        } catch (e) {
+          alert(`Failed to create SQL file: ${e}`);
+        }
       }
       return;
-    }
 
     const normalizedOld = oldPath.replace(/\\/g, "/").replace(/\/$/, "");
     const parts = normalizedOld.split("/");
@@ -597,32 +633,42 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
                   setHoveredFolder(wf.path);
                 }}
                 onDragLeave={() => setHoveredFolder(null)}
-                onDrop={(e) => {
+                 onDrop={(e) => {
                   e.preventDefault();
                   setHoveredFolder(null);
                   const oldPath = e.dataTransfer.getData("text/plain");
                   if (oldPath) handleMove(oldPath, wf.path);
                 }}
               >
-                <span className="section-label">{wf.name}</span>
+                <div 
+                  style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, height: "100%", cursor: "pointer" }}
+                  onClick={() => toggleFolder(wf.path)}
+                >
+                  <span 
+                    className={`codicon codicon-chevron-${collapsedFolders.has(wf.path) ? "right" : "down"}`} 
+                    style={{ fontSize: 12, color: "#666", flexShrink: 0 }} 
+                  />
+                  <span className="section-label" style={{ userSelect: "none" }}>{wf.name}</span>
+                </div>
+
                 {hoveredFolder === wf.path && (
                   <div style={{ display: "flex", gap: 2 }}>
                     <button
-                      onClick={() => handleAction("newFolder", wf.path)}
+                      onClick={(e) => { e.stopPropagation(); handleAction("newFolder", wf.path); }}
                       title="New Folder"
                       style={{ color: "#666", padding: 2, borderRadius: 2 }}
                     >
                       <span className="codicon codicon-new-folder" style={{ fontSize: 13 }} />
                     </button>
                     <button
-                      onClick={() => scanFolder(wf.path)}
+                      onClick={(e) => { e.stopPropagation(); scanFolder(wf.path); }}
                       title="Refresh"
                       style={{ color: "#666", padding: 2, borderRadius: 2 }}
                     >
                       <span className="codicon codicon-refresh" style={{ fontSize: 13 }} />
                     </button>
                     <button
-                      onClick={() => onRemoveFolder(wf.path)}
+                      onClick={(e) => { e.stopPropagation(); onRemoveFolder(wf.path); }}
                       title="Remove folder from workspace"
                       style={{ color: "#666", padding: 2, borderRadius: 2 }}
                     >
@@ -632,27 +678,31 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
                 )}
               </div>
 
-              {tree.children.map((child, i) => (
-                <FileTreeView
-                  key={child.path + i}
-                  node={child}
-                  depth={0}
-                  activeFilePath={activeFilePath}
-                  onOpenFile={onOpenFile}
-                  onAction={handleAction}
-                  onMove={handleMove}
-                  renamingPath={renamingPath}
-                  onRenameComplete={handleRenameComplete}
-                  onContextMenu={(ev, n) => {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                    console.log("Opening context menu at", ev.clientX, ev.clientY, "for", n.name);
-                    setMenu({ visible: true, x: ev.clientX, y: ev.clientY, node: n, isRoot: false });
-                  }}
-                />
-              ))}
-              {files.length === 0 && (
-                <div style={{ fontSize: 12, color: "#aaa", padding: "8px 16px" }}>No RDL files found</div>
+              {!collapsedFolders.has(wf.path) && (
+                <>
+                  {tree.children.map((child, i) => (
+                    <FileTreeView
+                      key={child.path + i}
+                      node={child}
+                      depth={0}
+                      activeFilePath={activeFilePath}
+                      onOpenFile={onOpenFile}
+                      onAction={handleAction}
+                      onMove={handleMove}
+                      renamingPath={renamingPath}
+                      onRenameComplete={handleRenameComplete}
+                      onContextMenu={(ev, n) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        console.log("Opening context menu at", ev.clientX, ev.clientY, "for", n.name);
+                        setMenu({ visible: true, x: ev.clientX, y: ev.clientY, node: n, isRoot: false });
+                      }}
+                    />
+                  ))}
+                  {files.length === 0 && (
+                    <div style={{ fontSize: 12, color: "#aaa", padding: "8px 16px" }}>No RDL files found</div>
+                  )}
+                </>
               )}
             </div>
           );

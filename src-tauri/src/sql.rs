@@ -18,10 +18,16 @@ pub async fn run_sql(
     connection_string: &str,
     params: HashMap<String, Option<String>>,
     _is_stored_proc: bool,
+    database_override: Option<String>,
 ) -> Result<QueryResult, String> {
     let start = std::time::Instant::now();
 
     let mut config = parse_connection_string(connection_string)?;
+    if let Some(db) = database_override {
+        if !db.is_empty() {
+            config.database(&db);
+        }
+    }
     config.trust_cert();
 
     let tcp = TcpStream::connect(config.get_addr())
@@ -80,8 +86,8 @@ pub async fn run_sql(
     let mut columns: Vec<String> = Vec::new();
     let mut rows: Vec<HashMap<String, serde_json::Value>> = Vec::new();
 
-    if let Some(first_set) = rows_raw.into_iter().next() {
-        for row in first_set {
+    for set in rows_raw {
+        for row in set {
             if columns.is_empty() {
                 columns = row.columns().iter().map(|c| c.name().to_string()).collect();
             }
@@ -91,6 +97,9 @@ pub async fn run_sql(
                 map.insert(col_name.clone(), col_data_to_json(cell));
             }
             rows.push(map);
+        }
+        if !rows.is_empty() {
+            break;
         }
     }
 
@@ -166,4 +175,31 @@ fn parse_connection_string(cs: &str) -> Result<Config, String> {
     }
 
     Ok(config)
+}
+
+pub async fn get_databases(connection_string: &str) -> Result<Vec<String>, String> {
+    let mut config = parse_connection_string(connection_string)?;
+    config.trust_cert();
+
+    let tcp = TcpStream::connect(config.get_addr())
+        .await
+        .map_err(|e| format!("TCP connect failed: {e}"))?;
+    tcp.set_nodelay(true).ok();
+
+    let mut client = Client::connect(config, tcp.compat_write())
+        .await
+        .map_err(|e| format!("Connection failed: {e}"))?;
+
+    let query = "SELECT name FROM sys.databases WHERE database_id > 4 OR name = 'master' ORDER BY name";
+    let stream = client.query(query, &[]).await.map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
+
+    let mut dbs = Vec::new();
+    for row in rows {
+        if let Some(name) = row.get::<&str, _>(0) {
+            dbs.push(name.to_string());
+        }
+    }
+
+    Ok(dbs)
 }

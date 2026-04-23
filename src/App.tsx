@@ -11,13 +11,14 @@ import { ExplorerPanel } from "./panels/ExplorerPanel";
 import { ServerPanel } from "./panels/ServerPanel";
 import { SqlEditorPanel } from "./panels/SqlEditorPanel";
 import { ReportTabContent } from "./panels/ReportTabContent";
+import { SettingsPanel } from "./panels/SettingsPanel";
 
 export default function App() {
   const {
     settings, setSection, updateSettings,
     addWorkspaceFolder, removeWorkspaceFolder,
     addConnection, removeConnection, updateConnection,
-    toggleHiddenSsrsPath,
+    toggleHiddenSsrsPath, importSettings,
   } = useSettings();
 
   const { tabs, activeId, activeTab, openTab, closeTab, closeTabsByPath, setTabView, setActiveId } = useTabs();
@@ -68,7 +69,7 @@ export default function App() {
         <ActivityBar active={section} onChange={handleSectionChange} />
 
         {/* Side panel — hidden for sqleditor or if toggled off */}
-        {section !== "sqleditor" && sidebarVisible && (
+        {section !== "sqleditor" && section !== "settings" && sidebarVisible && (
           <div
             className="flex flex-col border-r overflow-hidden"
             style={{ width: 280, borderColor: "#d4d4d4", flexShrink: 0 }}
@@ -105,11 +106,20 @@ export default function App() {
           {section === "sqleditor" ? (
             <SqlEditorPanel
               connections={settings.connections}
+              workspaceFolders={settings.workspaceFolders}
               onAddConnection={addConnection}
               onRemoveConnection={removeConnection}
               onUpdateConnection={updateConnection}
               onStatus={onStatus}
               sidebarVisible={sidebarVisible}
+            />
+          ) : section === "settings" ? (
+            <SettingsPanel
+              settings={settings}
+              onUpdateSettings={updateSettings}
+              onImportSettings={importSettings}
+              onAddConnection={addConnection}
+              onRemoveConnection={removeConnection}
             />
           ) : (
             <>

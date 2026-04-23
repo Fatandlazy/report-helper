@@ -1,4 +1,4 @@
-export type Section = "explorer" | "server" | "sqleditor";
+export type Section = "explorer" | "server" | "sqleditor" | "settings";
 export type TabView = "overview" | "sqltester" | "preview";
 
 export interface ReportTab {
@@ -114,3 +114,9 @@ export interface QueryResult {
   rowCount: number;
   elapsedMs: number;
 }
+
+export const SAMPLE_SQL = `SELECT
+    DB_NAME()        AS current_database,
+    SUSER_SNAME()    AS current_login,
+    @@VERSION        AS sql_server_version,
+    GETDATE()        AS server_time;`;
