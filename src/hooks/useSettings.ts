@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { AppSettings, DbConnection, Section, WorkspaceFolder } from "../types";
+import { AppSettings, DbConnection, Section, WorkspaceFolder, SqlHistoryItem } from "../types";
 
 const SETTINGS_KEY = "app_settings_v2";
 
@@ -12,7 +12,9 @@ const defaultSettings: AppSettings = {
   lastSection: "explorer",
   activeConnectionId: "",
   hiddenSsrsPaths: [],
+  hiddenLocalPaths: [],
   defaultSafeRun: true,
+  sqlHistory: [],
 };
 
 function load(): AppSettings {
@@ -82,8 +84,24 @@ export function useSettings() {
         : [...prev.hiddenSsrsPaths, path],
     }));
   }
+
+  function toggleHiddenLocalPath(path: string) {
+    setSettings(prev => ({
+      ...prev,
+      hiddenLocalPaths: (prev.hiddenLocalPaths || []).includes(path)
+        ? (prev.hiddenLocalPaths || []).filter(p => p !== path)
+        : [...(prev.hiddenLocalPaths || []), path],
+    }));
+  }
   function importSettings(newSettings: AppSettings) {
     setSettings(newSettings);
+  }
+
+  function addToHistory(item: SqlHistoryItem) {
+    setSettings(prev => {
+      const history = [item, ...(prev.sqlHistory || [])].slice(0, 100);
+      return { ...prev, sqlHistory: history };
+    });
   }
   
   return {
@@ -96,6 +114,8 @@ export function useSettings() {
     updateConnection,
     setSection,
     toggleHiddenSsrsPath,
+    toggleHiddenLocalPath,
     importSettings,
+    addToHistory,
   };
 }

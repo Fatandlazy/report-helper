@@ -10,6 +10,8 @@ interface Props {
   onOpenFile: (path: string, name: string) => void;
   activeFilePath: string | null;
   onCloseTabsByPath: (path: string) => void;
+  hiddenPaths: string[];
+  onToggleHiddenPath: (path: string) => void;
 }
 
 function getFileIcon(filename: string) {
@@ -119,6 +121,22 @@ function getFileIcon(filename: string) {
   sortTree(root);
   
   return root;
+}
+
+function filterHiddenNodes(node: FileTreeNode, hiddenPaths: string[], showHidden: boolean): FileTreeNode | null {
+  const normPath = node.path.replace(/\\/g, "/").replace(/\/$/, "");
+  const isHidden = hiddenPaths.some(hp => {
+    const normHp = hp.replace(/\\/g, "/").replace(/\/$/, "");
+    return normPath === normHp || normPath.startsWith(normHp + "/");
+  });
+
+  if (isHidden && !showHidden) return null;
+
+  const filteredChildren = node.children
+    .map(c => filterHiddenNodes(c, hiddenPaths, showHidden))
+    .filter((c): c is FileTreeNode => c !== null);
+
+  return { ...node, children: filteredChildren };
 }
 
 function FileTreeView({
@@ -256,7 +274,7 @@ function FileTreeView({
 
 function ContextMenu({ x, y, node, isRoot, onAction, onClose }: { 
   x: number, y: number, node: FileTreeNode | null, isRoot: boolean,
-  onAction: (action: "newFolder" | "newSql" | "rename" | "delete" | "reveal" | "refresh", path: string) => void,
+  onAction: (action: "newFolder" | "newSql" | "rename" | "delete" | "reveal" | "refresh" | "hide", path: string) => void,
   onClose: () => void 
 }) {
   if (!node) return null;
@@ -285,6 +303,9 @@ function ContextMenu({ x, y, node, isRoot, onAction, onClose }: {
       <div className="context-menu-item" onClick={() => { onAction("refresh", node.path); onClose(); }}>
         <span className="codicon codicon-refresh" /> Refresh
       </div>
+      <div className="context-menu-item" onClick={() => { onAction("hide", node.path); onClose(); }}>
+        <span className="codicon codicon-eye-closed" /> Hide
+      </div>
       {!isRoot && (
         <>
           <div className="context-menu-divider" />
@@ -297,9 +318,13 @@ function ContextMenu({ x, y, node, isRoot, onAction, onClose }: {
   );
 }
 
-export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, onOpenFile, activeFilePath, onCloseTabsByPath }: Props) {
+export function ExplorerPanel({ 
+  workspaceFolders, onAddFolder, onRemoveFolder, onOpenFile, 
+  activeFilePath, onCloseTabsByPath, hiddenPaths, onToggleHiddenPath 
+}: Props) {
   const [folderFiles, setFolderFiles] = useState<Record<string, string[]>>({});
   const [search, setSearch] = useState("");
+  const [showHidden, setShowHidden] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
 
   const toggleFolder = (path: string) => {
@@ -345,7 +370,7 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
     };
   }, []);
 
-  const handleAction = async (action: "newFolder" | "newSql" | "rename" | "delete" | "reveal" | "refresh", path: string) => {
+  const handleAction = async (action: "newFolder" | "newSql" | "rename" | "delete" | "reveal" | "refresh" | "hide", path: string) => {
     console.log("Action triggered:", action, path);
     const normPath = path.replace(/\\/g, "/").replace(/\/$/, "");
 
@@ -375,6 +400,8 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
       }
     } else if (action === "reveal") {
       await invoke("reveal_in_explorer", { path });
+    } else if (action === "hide") {
+      onToggleHiddenPath(path);
     }
   };
 
@@ -513,6 +540,17 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
             <span className="codicon codicon-add" style={{ fontSize: 13 }} />
             <span style={{ fontSize: 11, fontWeight: 500 }}>Add Folder</span>
           </button>
+          <button
+            onClick={() => setShowHidden(!showHidden)}
+            title={showHidden ? "Hide Hidden Items" : "Show Hidden Items"}
+            style={{ 
+              color: showHidden ? "#007acc" : "#666", padding: "2px 6px", borderRadius: 3,
+              display: "flex", alignItems: "center", cursor: "pointer",
+              background: showHidden ? "rgba(0,122,204,0.1)" : "transparent"
+            }}
+          >
+            <span className={`codicon ${showHidden ? "codicon-eye" : "codicon-eye-closed"}`} style={{ fontSize: 13 }} />
+          </button>
         </div>
       </div>
 
@@ -620,7 +658,9 @@ export function ExplorerPanel({ workspaceFolders, onAddFolder, onRemoveFolder, o
         {/* Workspace folder trees */}
         {!filteredFiles && workspaceFolders.map(wf => {
           const files = folderFiles[wf.path] ?? [];
-          const tree = buildTree(wf.path, files, creatingFolderParent, renamingPath);
+          let tree = buildTree(wf.path, files, creatingFolderParent, renamingPath);
+          tree = filterHiddenNodes(tree, hiddenPaths, showHidden) || tree;
+          
           return (
             <div key={wf.path}>
               <div

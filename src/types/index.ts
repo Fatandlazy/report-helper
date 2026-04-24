@@ -1,4 +1,4 @@
-export type Section = "explorer" | "server" | "sqleditor" | "settings";
+export type Section = "explorer" | "search" | "server" | "sqleditor" | "settings";
 export type TabView = "overview" | "sqltester" | "preview";
 
 export interface ReportTab {
@@ -31,6 +31,12 @@ export interface DbConnection {
   connectionString: string;
 }
 
+export interface SqlHistoryItem {
+  sql: string;
+  timestamp: number;
+  connectionName: string;
+}
+
 export interface AppSettings {
   workspaceFolders: WorkspaceFolder[];
   connections: DbConnection[];
@@ -40,7 +46,9 @@ export interface AppSettings {
   lastSection: Section;
   activeConnectionId: string;
   hiddenSsrsPaths: string[];
+  hiddenLocalPaths?: string[];
   defaultSafeRun: boolean;
+  sqlHistory?: SqlHistoryItem[];
 }
 
 export interface QueryParameter {

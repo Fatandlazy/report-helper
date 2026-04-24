@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const win = getCurrentWindow();
@@ -38,6 +39,25 @@ function WinBtn({ onClick, icon, title, isClose }: WinBtnProps) {
 }
 
 export function TitleBar() {
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    const checkMax = async () => {
+      const max = await win.isMaximized();
+      setIsMaximized(max);
+    };
+    checkMax();
+    
+    // Listen for resize to update icon
+    const unlisten = win.onResized(() => {
+      checkMax();
+    });
+    
+    return () => {
+      unlisten.then(f => f());
+    };
+  }, []);
+
   return (
     <div
       className="flex items-center select-none"
@@ -60,7 +80,11 @@ export function TitleBar() {
       {/* Window controls */}
       <div className="flex" style={{ pointerEvents: "auto" }}>
         <WinBtn onClick={() => win.minimize()} icon="codicon-chrome-minimize" title="Minimize" />
-        <WinBtn onClick={() => win.toggleMaximize()} icon="codicon-chrome-maximize" title="Maximize" />
+        <WinBtn 
+          onClick={() => win.toggleMaximize()} 
+          icon={isMaximized ? "codicon-chrome-restore" : "codicon-chrome-maximize"} 
+          title={isMaximized ? "Restore" : "Maximize"} 
+        />
         <WinBtn onClick={() => win.close()} icon="codicon-chrome-close" title="Close" isClose />
       </div>
     </div>

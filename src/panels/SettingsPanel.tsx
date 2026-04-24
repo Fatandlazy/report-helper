@@ -139,6 +139,44 @@ export function SettingsPanel({
           </div>
         </section>
 
+        {/* Hidden Items Section */}
+        <section style={{ marginBottom: 40 }}>
+          <h2 style={{ fontSize: 13, fontWeight: 600, color: "#007acc", textTransform: "uppercase", marginBottom: 16, borderBottom: "1px solid #eee", paddingBottom: 8 }}>
+            Hidden Items
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 13, color: "#666" }}>
+              Manage visibility of files, folders, and SSRS items that you have hidden from the browsers.
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ flex: 1, background: "#f9f9f9", padding: 12, borderRadius: 6, border: "1px solid #eee" }}>
+                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>Local Workspace</div>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{settings.hiddenLocalPaths?.length || 0} items hidden</div>
+                <button 
+                  onClick={() => onUpdateSettings({ hiddenLocalPaths: [] })}
+                  disabled={!settings.hiddenLocalPaths?.length}
+                  className="btn-secondary"
+                  style={{ width: "100%", fontSize: 11 }}
+                >
+                  Clear All
+                </button>
+              </div>
+              <div style={{ flex: 1, background: "#f9f9f9", padding: 12, borderRadius: 6, border: "1px solid #eee" }}>
+                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>SSRS Server</div>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{settings.hiddenSsrsPaths?.length || 0} items hidden</div>
+                <button 
+                  onClick={() => onUpdateSettings({ hiddenSsrsPaths: [] })}
+                  disabled={!settings.hiddenSsrsPaths?.length}
+                  className="btn-secondary"
+                  style={{ width: "100%", fontSize: 11 }}
+                >
+                  Clear All
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* General Section */}
         <section style={{ marginBottom: 40 }}>
           <h2 style={{ fontSize: 13, fontWeight: 600, color: "#007acc", textTransform: "uppercase", marginBottom: 16, borderBottom: "1px solid #eee", paddingBottom: 8 }}>

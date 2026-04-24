@@ -23,6 +23,85 @@ async fn update_rdl_sql(path: String, dataset_name: String, new_sql: String) -> 
 }
 
 #[tauri::command]
+async fn update_rdl_parameter(path: String, param_name: String, updated: rdl::ReportParameter) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || rdl::update_rdl_parameter(&path, &param_name, updated))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn remove_rdl_dataset(path: String, dataset_name: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || rdl::remove_rdl_dataset(&path, &dataset_name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn add_rdl_parameter(path: String, param: rdl::ReportParameter) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || rdl::add_rdl_parameter(&path, param))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn add_rdl_dataset(path: String, ds: rdl::DataSetInfo) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || rdl::add_rdl_dataset(&path, ds))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    pub path: String,
+    pub line: usize,
+    pub content: String,
+}
+
+#[tauri::command]
+async fn search_in_files(base_path: String, query: String) -> Result<Vec<SearchResult>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut results = Vec::new();
+        let query_lower = query.to_lowercase();
+        
+        fn walk_search(dir: &Path, query: &str, results: &mut Vec<SearchResult>) -> std::io::Result<()> {
+            if dir.is_dir() {
+                for entry in std::fs::read_dir(dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let name = path.file_name().unwrap_or_default().to_string_lossy();
+                        if name != "node_modules" && !name.starts_with('.') && name != "bin" && name != "obj" {
+                            walk_search(&path, query, results)?;
+                        }
+                    } else {
+                        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                        if ext == "sql" || ext == "rdl" {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                for (i, line) in content.lines().enumerate() {
+                                    if line.to_lowercase().contains(query) {
+                                        results.push(SearchResult {
+                                            path: path.to_string_lossy().to_string(),
+                                            line: i + 1,
+                                            content: line.trim().to_string(),
+                                        });
+                                    }
+                                    if results.len() > 1000 { return Ok(()); } // Limit results
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        let _ = walk_search(Path::new(&base_path), &query_lower, &mut results);
+        Ok(results)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn run_sql(
     sql: String,
     connection_string: String,
@@ -268,10 +347,15 @@ pub fn run() {
             fs_remove,
             fs_move,
             reveal_in_explorer,
-            read_text_file,
             write_text_file,
             get_file_modified_time,
             update_rdl_sql,
+            update_rdl_parameter,
+            remove_rdl_dataset,
+            add_rdl_parameter,
+            add_rdl_dataset,
+            search_in_files,
+            read_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

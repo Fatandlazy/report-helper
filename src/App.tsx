@@ -15,13 +15,14 @@ import { ServerPanel } from "./panels/ServerPanel";
 import { SqlEditorPanel } from "./panels/SqlEditorPanel";
 import { ReportTabContent } from "./panels/ReportTabContent";
 import { SettingsPanel } from "./panels/SettingsPanel";
+import { SearchPanel } from "./panels/SearchPanel";
 
 export default function App() {
   const {
     settings, setSection, updateSettings,
     addWorkspaceFolder, removeWorkspaceFolder,
     addConnection, removeConnection, updateConnection,
-    toggleHiddenSsrsPath, importSettings,
+    toggleHiddenSsrsPath, toggleHiddenLocalPath, importSettings, addToHistory,
   } = useSettings();
 
   const { 
@@ -38,6 +39,10 @@ export default function App() {
     "ctrl+alt+1": () => setSection("explorer"),
     "ctrl+alt+2": () => setSection("server"),
     "ctrl+alt+3": () => setSection("sqleditor"),
+    "ctrl+shift+f": () => {
+      setSection("search");
+      setSidebarVisible(true);
+    },
     "ctrl+alt+e": () => setSection("explorer"),
     "ctrl+alt+s": () => setSection("server"),
     "ctrl+alt+q": () => setSection("sqleditor"),
@@ -194,6 +199,14 @@ export default function App() {
                 onOpenFile={handleOpenFile}
                 activeFilePath={activeFilePath}
                 onCloseTabsByPath={closeTabsByPath}
+                hiddenPaths={settings.hiddenLocalPaths || []}
+                onToggleHiddenPath={toggleHiddenLocalPath}
+              />
+            )}
+            {section === "search" && (
+              <SearchPanel
+                workspaceFolders={settings.workspaceFolders}
+                onOpenFile={handleOpenFile}
               />
             )}
             {section === "server" && (
@@ -227,6 +240,8 @@ export default function App() {
               sidebarVisible={sidebarVisible}
               defaultSafeRun={settings.defaultSafeRun}
               onUpdateTabMetadata={updateTabsByPath}
+              addToHistory={addToHistory}
+              history={settings.sqlHistory}
             />
           </div>
 
@@ -241,8 +256,8 @@ export default function App() {
             />
           </div>
 
-          {/* Reports Panel (Explorer/Server Tabs) */}
-          <div className="flex flex-col flex-1 overflow-hidden" style={{ display: (section === "explorer" || section === "server") ? "flex" : "none" }}>
+          {/* Reports Panel (Explorer/Search/Server Tabs) */}
+          <div className="flex flex-col flex-1 overflow-hidden" style={{ display: (section === "explorer" || section === "search" || section === "server") ? "flex" : "none" }}>
             <TabBar
               tabs={tabs}
               activeId={activeId}
