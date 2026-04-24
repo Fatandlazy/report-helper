@@ -48,7 +48,7 @@ The application simplifies the process of managing, testing, and developing RDL 
 - WebView2 (For Windows users).
 
 ### Development Setup
-1. Clone the repo: `git clone <your-repo-url>`
+1. Clone the repo: `git clone https://github.com/Fatandlazy/report-helper.git`
 2. Install dependencies: `npm install`
 3. Run in dev mode: `npm run tauri dev`
 
