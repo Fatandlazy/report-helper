@@ -266,3 +266,38 @@ pre, code, .mono {
   background: #e5e5e5;
   margin: 4px 0;
 }
+
+/* ─── Premium UI Extensions ─────────────────────────────────────────────── */
+
+.glass {
+  background: rgba(255, 255, 255, 0.7) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.gradient-blue {
+  background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
+}
+
+.shadow-premium {
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+}
+
+.transition-all {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.activity-item-active {
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.badge-premium {
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}

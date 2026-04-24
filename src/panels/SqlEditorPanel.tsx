@@ -4,6 +4,8 @@ import { save as saveFileDialog, ask } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
 import { DbConnection, QueryResult, WorkspaceFolder, SAMPLE_SQL, ReportTab } from "../types";
 import { useCallback } from "react";
+import { format } from "sql-formatter";
+import { SQL_SNIPPETS } from "../data/snippets";
 import { useHotkeys } from "../hooks/useHotkeys";
 
 interface Props {
@@ -16,6 +18,8 @@ interface Props {
   sidebarVisible: boolean;
   defaultSafeRun: boolean;
   onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
+  addToHistory: (item: any) => void;
+  history?: any[];
 }
 
 
@@ -24,7 +28,8 @@ type TestState = "idle" | "testing" | "ok" | "fail";
 
 export function SqlEditorPanel({ 
   connections, workspaceFolders, onAddConnection, onRemoveConnection, 
-  onUpdateConnection, onStatus, sidebarVisible, defaultSafeRun, onUpdateTabMetadata 
+  onUpdateConnection, onStatus, sidebarVisible, defaultSafeRun, onUpdateTabMetadata,
+  addToHistory, history
 }: Props) {
   const [connId, setConnId] = useState(connections[0]?.id ?? "");
   const [sql, setSql] = useState(SAMPLE_SQL);
@@ -34,6 +39,7 @@ export function SqlEditorPanel({
   const [isSample, setIsSample] = useState(true);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editorHeight, setEditorHeight] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
@@ -172,7 +178,20 @@ export function SqlEditorPanel({
     "f5": handleRun,
     "ctrl+s": handleSaveSql,
     "ctrl+n": handleNewSql,
+    "shift+alt+f": handleFormatSql,
   });
+
+  function handleFormatSql() {
+    try {
+      const formatted = format(sql, {
+        language: "tsql",
+        keywordCase: "upper",
+      });
+      setSql(formatted);
+    } catch (e) {
+      console.error("Format failed", e);
+    }
+  }
 
   async function handleRun() {
     const trimmedSql = sql.trim();
@@ -196,9 +215,16 @@ export function SqlEditorPanel({
         database: selectedDb || null,
       });
       setResult(res);
+      setError(null);
       onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${defaultSafeRun ? " (Safe)" : ""}`);
-    } catch (e: any) {
-      setError(String(e));
+      
+      addToHistory({
+        sql: trimmedSql,
+        timestamp: Date.now(),
+        connectionName: conn.name
+      });
+    } catch (err: any) {
+      setError(String(err));
       onStatus("", "Error");
     } finally {
       setRunning(false);
@@ -570,6 +596,25 @@ export function SqlEditorPanel({
 
           <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
             <button
+              onClick={() => setShowHistory(!showHistory)}
+              title="Execution History"
+              className="btn-secondary"
+              style={{ padding: "4px 8px", borderRadius: 2, background: showHistory ? "#eee" : "transparent" }}
+            >
+              <span className="codicon codicon-history" style={{ fontSize: 13 }} />
+            </button>
+            <div style={{ height: 16, width: 1, background: "#ddd", margin: "0 4px" }} />
+            <button
+              onClick={handleFormatSql}
+              title="Format SQL (Shift+Alt+F)"
+              className="btn-secondary"
+              style={{ padding: "4px 8px", borderRadius: 2 }}
+            >
+              <span className="codicon codicon-json" style={{ fontSize: 13 }} />
+              <span style={{ fontSize: 12 }}>Format</span>
+            </button>
+            <div style={{ height: 16, width: 1, background: "#ddd", margin: "0 4px" }} />
+            <button
               onClick={handleRun}
               disabled={running || !sql.trim() || !connId}
               className="btn-primary"
@@ -583,6 +628,42 @@ export function SqlEditorPanel({
             </button>
           </div>
         </div>
+
+        {showHistory && history && (
+          <div style={{ 
+            position: "absolute", top: 40, right: 10, width: 350, maxHeight: 400, 
+            background: "#fff", border: "1px solid #ccc", borderRadius: 4, zIndex: 100,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)", display: "flex", flexDirection: "column"
+          }}>
+            <div style={{ padding: "8px 12px", fontSize: 11, fontWeight: 600, color: "#999", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between" }}>
+              <span>EXECUTION HISTORY</span>
+              <button onClick={() => setShowHistory(false)} style={{ color: "#999" }}><span className="codicon codicon-close" /></button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+              {history.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "#aaa", fontSize: 12 }}>No history yet</div>}
+              {history.map((h, i) => (
+                <div 
+                  key={i}
+                  onClick={() => {
+                    setSql(h.sql);
+                    setShowHistory(false);
+                    setIsSample(false);
+                  }}
+                  style={{ padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid #f9f9f9" }}
+                  className="tree-item"
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#888", marginBottom: 2 }}>
+                    <span>{h.connectionName}</span>
+                    <span>{new Date(h.timestamp).toLocaleString()}</span>
+                  </div>
+                  <div style={{ fontSize: 11, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#333" }}>
+                    {h.sql}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* SQL Monaco Editor */}
         <div id="sql-editor-container" style={{ position: "relative", flex: `0 0 ${editorHeight}px`, borderBottom: "1px solid #e8e8e8" }}>
@@ -617,6 +698,15 @@ export function SqlEditorPanel({
                       kind: monaco.languages.CompletionItemKind.Field,
                       insertText: c,
                       detail: "Column"
+                    })),
+                    // Snippets
+                    ...SQL_SNIPPETS.map(s => ({
+                      label: s.label,
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      insertText: s.insertText,
+                      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                      detail: s.detail,
+                      documentation: s.documentation
                     })),
                     // Basic keywords
                     ...["SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "ON", "GROUP BY", "ORDER BY", "HAVING", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "DROP", "CREATE", "ALTER", "TABLE", "DATABASE", "PROCEDURE", "EXEC", "DECLARE", "AS", "INTO", "VALUES", "SET", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "IS", "NULL", "EXISTS", "TOP", "DISTINCT", "COUNT", "SUM", "AVG", "MIN", "MAX", "NVARCHAR", "INT", "BIT", "DATETIME", "MONEY", "DECIMAL"].map(k => ({
@@ -745,6 +835,8 @@ function ConnRow({ conn, isActive, onSelect, onEdit, onRemove }: {
 }
 
 function ResultTable({ result }: { result: QueryResult }) {
+  const [copiedCell, setCopiedCell] = useState<{ r: number, c: string } | null>(null);
+
   if (result.rows.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#aaa", fontSize: 13 }}>
@@ -752,39 +844,83 @@ function ResultTable({ result }: { result: QueryResult }) {
       </div>
     );
   }
+
+  const handleCopyCell = async (val: any, rowIdx: number, colName: string) => {
+    try {
+      await navigator.clipboard.writeText(String(val ?? ""));
+      setCopiedCell({ r: rowIdx, c: colName });
+      setTimeout(() => setCopiedCell(null), 2000);
+    } catch (e) {
+      console.error("Copy failed", e);
+    }
+  };
+
   return (
-    <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse", tableLayout: "auto" }}>
-      <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
-        <tr style={{ background: "#f3f3f3" }}>
-          {result.columns.map(c => (
-            <th key={c} style={{
-              padding: "5px 12px", textAlign: "left", fontWeight: 600,
-              color: "#555", whiteSpace: "nowrap",
-              borderBottom: "1px solid #e0e0e0", borderRight: "1px solid #eee",
-            }}>{c}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {result.rows.map((row, i) => (
-          <tr
-            key={i}
-            style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}
-            onMouseEnter={e => (e.currentTarget.style.background = "#f0f8ff")}
-            onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? "#fff" : "#fafafa")}
-          >
+    <div style={{ width: "100%", height: "100%", overflow: "auto" }}>
+      <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", tableLayout: "auto", background: "#fff" }}>
+        <thead style={{ position: "sticky", top: 0, zIndex: 10, background: "#f3f3f3", boxShadow: "0 1px 0 #e0e0e0" }}>
+          <tr>
+            <th style={{ width: 40, borderRight: "1px solid #e0e0e0" }}></th>
             {result.columns.map(c => (
-              <td key={c} style={{
-                padding: "4px 12px", whiteSpace: "nowrap",
-                borderBottom: "1px solid #f0f0f0", borderRight: "1px solid #f5f5f5",
-                color: "#333",
-              }}>
-                {String(row[c] ?? "")}
-              </td>
+              <th key={c} style={{
+                padding: "6px 12px", textAlign: "left", fontWeight: 600,
+                color: "#555", whiteSpace: "nowrap",
+                borderBottom: "1px solid #e0e0e0", borderRight: "1px solid #eee",
+              }}>{c}</th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {result.rows.map((row, i) => (
+            <tr
+              key={i}
+              style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}
+              onMouseEnter={e => (e.currentTarget.style.background = "#f0f7ff")}
+              onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? "#fff" : "#fafafa")}
+            >
+              <td style={{ 
+                textAlign: "center", color: "#aaa", fontSize: 10, 
+                borderBottom: "1px solid #f0f0f0", borderRight: "1px solid #e0e0e0",
+                background: "#fdfdfd"
+              }}>
+                {i + 1}
+              </td>
+              {result.columns.map(c => {
+                const val = row[c];
+                const isCopied = copiedCell?.r === i && copiedCell?.c === c;
+                return (
+                  <td 
+                    key={c} 
+                    onDoubleClick={() => handleCopyCell(val, i, c)}
+                    title="Double click to copy"
+                    style={{
+                      padding: "4px 12px", whiteSpace: "nowrap",
+                      borderBottom: "1px solid #f0f0f0", borderRight: "1px solid #f5f5f5",
+                      color: val === null ? "#ccc" : "#333",
+                      fontStyle: val === null ? "italic" : "normal",
+                      position: "relative",
+                      maxWidth: 400,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis"
+                    }}
+                  >
+                    {val === null ? "NULL" : String(val)}
+                    {isCopied && (
+                      <div style={{
+                        position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
+                        background: "rgba(0,120,212,0.1)", display: "flex", alignItems: "center",
+                        justifyContent: "center", color: "#0078d4", fontWeight: 600, fontSize: 10
+                      }}>
+                        COPIED
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

@@ -397,3 +397,312 @@ pub fn update_rdl_sql(path: &str, dataset_name: &str, new_sql: &str) -> Result<(
 
     Ok(())
 }
+
+pub fn update_rdl_parameter(path: &str, param_name: &str, updated: ReportParameter) -> Result<(), String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+
+    let mut reader = Reader::from_str(&content);
+    reader.config_mut().trim_text(false);
+
+    let mut writer = Writer::new(std::io::Cursor::new(Vec::new()));
+    let mut in_target_param = false;
+    let mut updated_count = 0;
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let local = local_name(&e);
+                if local == "ReportParameter" {
+                    if let Some(name) = attr_value(&e, b"Name") {
+                        if name == param_name {
+                            in_target_param = true;
+                            // Update the name attribute if it changed (though usually we use the name as ID)
+                            let mut new_e = e.clone();
+                            new_e.clear_attributes();
+                            new_e.push_attribute(("Name", updated.name.as_str()));
+                            writer.write_event(Event::Start(new_e)).map_err(|e| e.to_string())?;
+                            buf.clear();
+                            continue;
+                        }
+                    }
+                }
+                
+                if in_target_param {
+                    // Inside the target parameter, we skip existing simple tags and replace them later or update them
+                    match local.as_str() {
+                        "Prompt" | "DataType" | "Nullable" | "AllowBlank" | "MultiValue" | "Hidden" => {
+                            // Skip these, we will write them in the End event of the specific tag or just before the End of ReportParameter
+                            // Actually, it's easier to just write our own values and skip the original ones.
+                            reader.read_to_end_into(e.name(), &mut Vec::new()).map_err(|e| e.to_string())?;
+                            buf.clear();
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
+                writer.write_event(Event::Start(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::End(e)) => {
+                let local = local_name_end(&e);
+                if local == "ReportParameter" && in_target_param {
+                    // Just before closing the parameter, write all our updated values
+                    write_tag(&mut writer, "DataType", &updated.data_type)?;
+                    write_tag(&mut writer, "Prompt", &updated.prompt)?;
+                    if updated.nullable { write_tag(&mut writer, "Nullable", "true")?; }
+                    if updated.allow_blank { write_tag(&mut writer, "AllowBlank", "true")?; }
+                    if updated.multi_value { write_tag(&mut writer, "MultiValue", "true")?; }
+                    if updated.hidden { write_tag(&mut writer, "Hidden", "true")?; }
+                    
+                    in_target_param = false;
+                    updated_count += 1;
+                }
+                writer.write_event(Event::End(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(e) => {
+                if !in_target_param {
+                    writer.write_event(e).map_err(|e| e.to_string())?;
+                } else {
+                    // If we are in the target param, we only want to preserve certain things (like DefaultValue or AvailableValues for now)
+                    // But for simplicity in this MVP, let's just preserve everything except what we explicitly skip in Start event.
+                    writer.write_event(e).map_err(|e| e.to_string())?;
+                }
+            }
+            Err(e) => return Err(format!("XML parse error: {e}")),
+        }
+        buf.clear();
+    }
+
+    if updated_count == 0 {
+        return Err(format!("Parameter '{}' not found", param_name));
+    }
+
+    let result = writer.into_inner().into_inner();
+    std::fs::write(path, result).map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(())
+}
+
+pub fn remove_rdl_dataset(path: &str, dataset_name: &str) -> Result<(), String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+
+    let mut reader = Reader::from_str(&content);
+    reader.config_mut().trim_text(false);
+
+    let mut writer = Writer::new(std::io::Cursor::new(Vec::new()));
+    let mut in_target_dataset = false;
+    let mut removed = false;
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let local = local_name(&e);
+                if local == "DataSet" {
+                    if let Some(name) = attr_value(&e, b"Name") {
+                        if name == dataset_name {
+                            in_target_dataset = true;
+                            // Skip the entire DataSet element
+                            reader.read_to_end_into(e.name(), &mut Vec::new()).map_err(|e| e.to_string())?;
+                            removed = true;
+                            buf.clear();
+                            continue;
+                        }
+                    }
+                }
+                writer.write_event(Event::Start(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::End(e)) => {
+                writer.write_event(Event::End(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(e) => {
+                if !in_target_dataset {
+                    writer.write_event(e).map_err(|e| e.to_string())?;
+                }
+            }
+            Err(e) => return Err(format!("XML parse error: {e}")),
+        }
+        buf.clear();
+    }
+
+    if !removed {
+        return Err(format!("Dataset '{}' not found", dataset_name));
+    }
+
+    let result = writer.into_inner().into_inner();
+    std::fs::write(path, result).map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(())
+}
+
+pub fn add_rdl_parameter(path: &str, param: ReportParameter) -> Result<(), String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+
+    let mut reader = Reader::from_str(&content);
+    reader.config_mut().trim_text(false);
+
+    let mut writer = Writer::new(std::io::Cursor::new(Vec::new()));
+    let mut param_added = false;
+    let mut in_params_container = false;
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let local = local_name(&e);
+                if local == "ReportParameters" {
+                    in_params_container = true;
+                }
+                writer.write_event(Event::Start(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::End(e)) => {
+                let local = local_name_end(&e);
+                if local == "ReportParameters" && in_params_container {
+                    // Add our new parameter at the end of the container
+                    write_parameter_node(&mut writer, &param)?;
+                    param_added = true;
+                    in_params_container = false;
+                } else if local == "Report" && !param_added {
+                    // If we reach the end of the report and haven't added the param (container didn't exist)
+                    writer.write_event(Event::Start(quick_xml::events::BytesStart::new("ReportParameters")))
+                        .map_err(|e| e.to_string())?;
+                    write_parameter_node(&mut writer, &param)?;
+                    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("ReportParameters")))
+                        .map_err(|e| e.to_string())?;
+                    param_added = true;
+                }
+                writer.write_event(Event::End(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(e) => {
+                writer.write_event(e).map_err(|e| e.to_string())?;
+            }
+            Err(e) => return Err(format!("XML parse error: {e}")),
+        }
+        buf.clear();
+    }
+
+    let result = writer.into_inner().into_inner();
+    std::fs::write(path, result).map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(())
+}
+
+fn write_parameter_node<W: std::io::Write>(writer: &mut Writer<W>, p: &ReportParameter) -> Result<(), String> {
+    let mut start = quick_xml::events::BytesStart::new("ReportParameter");
+    start.push_attribute(("Name", p.name.as_str()));
+    writer.write_event(Event::Start(start)).map_err(|e| e.to_string())?;
+    
+    write_tag(writer, "DataType", &p.data_type)?;
+    write_tag(writer, "Prompt", &p.prompt)?;
+    if p.nullable { write_tag(writer, "Nullable", "true")?; }
+    if p.allow_blank { write_tag(writer, "AllowBlank", "true")?; }
+    if p.multi_value { write_tag(writer, "MultiValue", "true")?; }
+    if p.hidden { write_tag(writer, "Hidden", "true")?; }
+    
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("ReportParameter")))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn add_rdl_dataset(path: &str, ds: DataSetInfo) -> Result<(), String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+
+    let mut reader = Reader::from_str(&content);
+    reader.config_mut().trim_text(false);
+
+    let mut writer = Writer::new(std::io::Cursor::new(Vec::new()));
+    let mut ds_added = false;
+    let mut in_datasets_container = false;
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let local = local_name(&e);
+                if local == "DataSets" {
+                    in_datasets_container = true;
+                }
+                writer.write_event(Event::Start(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::End(e)) => {
+                let local = local_name_end(&e);
+                if local == "DataSets" && in_datasets_container {
+                    write_dataset_node(&mut writer, &ds)?;
+                    ds_added = true;
+                    in_datasets_container = false;
+                } else if local == "Report" && !ds_added {
+                    writer.write_event(Event::Start(quick_xml::events::BytesStart::new("DataSets")))
+                        .map_err(|e| e.to_string())?;
+                    write_dataset_node(&mut writer, &ds)?;
+                    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("DataSets")))
+                        .map_err(|e| e.to_string())?;
+                    ds_added = true;
+                }
+                writer.write_event(Event::End(e)).map_err(|e| e.to_string())?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(e) => {
+                writer.write_event(e).map_err(|e| e.to_string())?;
+            }
+            Err(e) => return Err(format!("XML parse error: {e}")),
+        }
+        buf.clear();
+    }
+
+    let result = writer.into_inner().into_inner();
+    std::fs::write(path, result).map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(())
+}
+
+fn write_dataset_node<W: std::io::Write>(writer: &mut Writer<W>, ds: &DataSetInfo) -> Result<(), String> {
+    let mut start = quick_xml::events::BytesStart::new("DataSet");
+    start.push_attribute(("Name", ds.name.as_str()));
+    writer.write_event(Event::Start(start)).map_err(|e| e.to_string())?;
+    
+    writer.write_event(Event::Start(quick_xml::events::BytesStart::new("Query")))
+        .map_err(|e| e.to_string())?;
+    write_tag(writer, "DataSourceName", &ds.data_source_name)?;
+    write_tag(writer, "CommandText", &ds.command_text)?;
+    write_tag(writer, "CommandType", &ds.command_type)?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Query")))
+        .map_err(|e| e.to_string())?;
+
+    // Fields are required for a dataset to be valid, but adding them automatically from SQL is hard.
+    // For now, let's add a placeholder Field if none exist.
+    writer.write_event(Event::Start(quick_xml::events::BytesStart::new("Fields")))
+        .map_err(|e| e.to_string())?;
+    
+    let mut field = quick_xml::events::BytesStart::new("Field");
+    field.push_attribute(("Name", "ID"));
+    writer.write_event(Event::Start(field)).map_err(|e| e.to_string())?;
+    write_tag(writer, "DataField", "ID")?;
+    write_tag(writer, "TypeName", "System.Int32")?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Field")))
+        .map_err(|e| e.to_string())?;
+
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("Fields")))
+        .map_err(|e| e.to_string())?;
+    
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new("DataSet")))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn write_tag<W: std::io::Write>(writer: &mut Writer<W>, tag: &str, value: &str) -> Result<(), String> {
+    writer.write_event(Event::Start(quick_xml::events::BytesStart::new(tag)))
+        .map_err(|e| e.to_string())?;
+    writer.write_event(Event::Text(BytesText::new(value)))
+        .map_err(|e| e.to_string())?;
+    writer.write_event(Event::End(quick_xml::events::BytesEnd::new(tag)))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}

@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
 import { ReportTab, TabView, ReportMetadata, DataSetInfo, DbConnection, QueryResult, ReportParameter, ParameterValue, DataSourceInfo, QueryParameter } from "../types";
 import { useHotkeys } from "../hooks/useHotkeys";
+import { RDL_EXPRESSIONS } from "../data/expressions";
 
 interface Props {
   tab: ReportTab;
@@ -266,23 +268,33 @@ function OverviewView({ metadata, isEditMode, rdlPath, onRefresh, onUpdateTabMet
         <div style={{ fontSize: 13, color: "#aaa" }}>No datasets or parameters found.</div>
       )}
 
+      {/* State for adding new items */}
+      <AddItemsSection 
+        isEditMode={isEditMode} 
+        rdlPath={rdlPath} 
+        onRefresh={onRefresh} 
+        metadata={metadata}
+      />
+
       {metadata.dataSources.length > 0 && (
         <SectionBlock title="Data Sources" icon="codicon-database">
-          {metadata.dataSources.map((ds: DataSourceInfo) => (
-            <div key={ds.name} style={{
-              display: "flex", alignItems: "flex-start", gap: 10,
-              padding: "8px 12px", background: "#f7f7f7",
-              border: "1px solid #eee", borderRadius: 3,
-            }}>
-              <span className="codicon codicon-server" style={{ fontSize: 14, color: "#888", marginTop: 1, flexShrink: 0 }} />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{ds.name}</div>
-                {ds.connectionString && (
-                  <div style={{ fontSize: 12, color: "#888", fontFamily: "monospace", marginTop: 2 }}>{ds.connectionString}</div>
-                )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
+            {metadata.dataSources.map((ds: DataSourceInfo) => (
+              <div key={ds.name} style={{
+                display: "flex", alignItems: "flex-start", gap: 10,
+                padding: "8px 12px", background: "#f7f7f7",
+                border: "1px solid #eee", borderRadius: 3,
+              }}>
+                <span className="codicon codicon-server" style={{ fontSize: 14, color: "#888", marginTop: 1, flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{ds.name}</div>
+                  {ds.connectionString && (
+                    <div style={{ fontSize: 11, color: "#888", fontFamily: "monospace", marginTop: 2, wordBreak: "break-all" }}>{ds.connectionString}</div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </SectionBlock>
       )}
 
@@ -306,39 +318,16 @@ function OverviewView({ metadata, isEditMode, rdlPath, onRefresh, onUpdateTabMet
 
       {metadata.parameters.length > 0 && (
         <SectionBlock title={`Parameters (${metadata.parameters.length})`} icon="codicon-symbol-parameter">
-          <div style={{ border: "1px solid #eee", borderRadius: 3, overflow: "hidden" }}>
-            {metadata.parameters.map((p: ReportParameter, i: number) => (
-              <div key={p.name} style={{
-                display: "flex", alignItems: "center", gap: 0,
-                padding: "6px 12px", fontSize: 12,
-                background: i % 2 === 0 ? "#fff" : "#fafafa",
-                borderBottom: i < metadata.parameters.length - 1 ? "1px solid #f0f0f0" : "none",
-              }}>
-                <span style={{ fontFamily: "monospace", color: "#0000cc", width: 160, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  @{p.name}
-                </span>
-                <span style={{ color: "#888", width: 80, flexShrink: 0 }}>{p.dataType}</span>
-                <span style={{ color: "#555", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.prompt}</span>
-                
-                <div style={{ display: "flex", gap: 6, marginLeft: 12, flexShrink: 0 }}>
-                  {p.multiValue && <Badge label="Multi" color="#6b40bf" icon="codicon-layers" />}
-                  {p.nullable && <Badge label="Null" color="#007acc" icon="codicon-question" />}
-                  {p.allowBlank && <Badge label="Blank" color="#007acc" icon="codicon-empty-window" />}
-                  {p.hidden && <Badge label="Hidden" color="#666" icon="codicon-eye-closed" />}
-                </div>
-
-                {p.defaultValue && (
-                  <span style={{ fontFamily: "monospace", color: "#aaa", flexShrink: 0, marginLeft: 12 }}>
-                    = {p.defaultValue}
-                  </span>
-                )}
-                {p.defaultValueQuery && (
-                  <span style={{ fontSize: 11, color: "#aaa", flexShrink: 0, marginLeft: 12, display: "flex", alignItems: "center", gap: 3 }}>
-                    <span className="codicon codicon-database" style={{ fontSize: 10 }} />
-                    {p.defaultValueQuery.dataSetName}
-                  </span>
-                )}
-              </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {metadata.parameters.map((p: ReportParameter) => (
+              <ParameterCard
+                key={p.name}
+                parameter={p}
+                isEditMode={isEditMode}
+                rdlPath={rdlPath}
+                onRefresh={onRefresh}
+                onUpdateTabMetadata={onUpdateTabMetadata}
+              />
             ))}
           </div>
         </SectionBlock>
@@ -361,14 +350,316 @@ function Badge({ label, color, icon }: { label: string; color: string; icon: str
   );
 }
 
-function SectionBlock({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
+function SectionBlock({ title, icon, children, action }: { title: string; icon: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
         <span className={`codicon ${icon}`} style={{ fontSize: 14, color: "#777" }} />
-        <span className="section-label">{title}</span>
+        <span className="section-label" style={{ flex: 1 }}>{title}</span>
+        {action}
       </div>
       {children}
+    </div>
+  );
+}
+
+function AddItemsSection({ isEditMode, rdlPath, onRefresh, metadata }: { 
+  isEditMode: boolean; 
+  rdlPath: string; 
+  onRefresh: () => void;
+  metadata: ReportMetadata;
+}) {
+  const [showAddParam, setShowAddParam] = useState(false);
+  const [showAddDs, setShowAddDs] = useState(false);
+
+  const [newParam, setNewParam] = useState<Partial<ReportParameter>>({
+    name: "", prompt: "", dataType: "String", nullable: false, multiValue: false
+  });
+  const [newDs, setNewDs] = useState<Partial<DataSetInfo>>({
+    name: "", dataSourceName: metadata.dataSources[0]?.name || "", commandType: "Text", commandText: ""
+  });
+
+  const [saving, setSaving] = useState(false);
+
+  if (!isEditMode) return null;
+
+  const handleAddParam = async () => {
+    if (!newParam.name) return;
+    setSaving(true);
+    try {
+      await invoke("add_rdl_parameter", { path: rdlPath, param: { ...newParam, defaultValue: "" } });
+      onRefresh();
+      setShowAddParam(false);
+      setNewParam({ name: "", prompt: "", dataType: "String", nullable: false, multiValue: false });
+    } catch (err) { alert(err); } finally { setSaving(false); }
+  };
+
+  const handleAddDs = async () => {
+    if (!newDs.name || !newDs.dataSourceName) return;
+    setSaving(true);
+    try {
+      await invoke("add_rdl_dataset", { path: rdlPath, ds: { ...newDs, commandText: newDs.commandText || "SELECT 1" } });
+      onRefresh();
+      setShowAddDs(false);
+      setNewDs({ name: "", dataSourceName: metadata.dataSources[0]?.name || "", commandType: "Text", commandText: "" });
+    } catch (err) { alert(err); } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 10, borderBottom: "1px solid #eee", paddingBottom: 15 }}>
+      <button 
+        className="btn-secondary" 
+        onClick={() => setShowAddParam(true)}
+        style={{ fontSize: 12, padding: "4px 10px" }}
+      >
+        <span className="codicon codicon-add" /> Add Parameter
+      </button>
+      <button 
+        className="btn-secondary" 
+        onClick={() => setShowAddDs(true)}
+        style={{ fontSize: 12, padding: "4px 10px" }}
+      >
+        <span className="codicon codicon-add" /> Add Dataset
+      </button>
+
+      {showAddParam && (
+        <div style={{ 
+          position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+          background: "#fff", border: "1px solid #ccc", borderRadius: 4, padding: 20, zIndex: 100,
+          boxShadow: "0 4px 20px rgba(0,0,0,0.2)", width: 400, display: "flex", flexDirection: "column", gap: 15
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Add New Parameter</div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, marginBottom: 4 }}>Name</label>
+            <input type="text" value={newParam.name} onChange={e => setNewParam({...newParam, name: e.target.value})} placeholder="e.g. OrgID" />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, marginBottom: 4 }}>Prompt</label>
+            <input type="text" value={newParam.prompt} onChange={e => setNewParam({...newParam, prompt: e.target.value})} placeholder="e.g. Organization:" />
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: "block", fontSize: 11, marginBottom: 4 }}>Data Type</label>
+              <select value={newParam.dataType} onChange={e => setNewParam({...newParam, dataType: e.target.value as any})}>
+                <option value="String">String</option>
+                <option value="Integer">Integer</option>
+                <option value="DateTime">DateTime</option>
+                <option value="Boolean">Boolean</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 15 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}><input type="checkbox" checked={newParam.nullable} onChange={e => setNewParam({...newParam, nullable: e.target.checked})} /> Nullable</label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}><input type="checkbox" checked={newParam.multiValue} onChange={e => setNewParam({...newParam, multiValue: e.target.checked})} /> Multi</label>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
+            <button className="btn-secondary" onClick={() => setShowAddParam(false)}>Cancel</button>
+            <button className="btn-primary" onClick={handleAddParam} disabled={saving}>{saving ? "Adding..." : "Add Parameter"}</button>
+          </div>
+        </div>
+      )}
+
+      {showAddDs && (
+        <div style={{ 
+          position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+          background: "#fff", border: "1px solid #ccc", borderRadius: 4, padding: 20, zIndex: 100,
+          boxShadow: "0 4px 20px rgba(0,0,0,0.2)", width: 400, display: "flex", flexDirection: "column", gap: 15
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Add New Dataset</div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, marginBottom: 4 }}>Name</label>
+            <input type="text" value={newDs.name} onChange={e => setNewDs({...newDs, name: e.target.value})} placeholder="e.g. dsMain" />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, marginBottom: 4 }}>Data Source</label>
+            <select value={newDs.dataSourceName} onChange={e => setNewDs({...newDs, dataSourceName: e.target.value})}>
+              {metadata.dataSources.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, marginBottom: 4 }}>Command Type</label>
+            <select value={newDs.commandType} onChange={e => setNewDs({...newDs, commandType: e.target.value})}>
+              <option value="Text">SQL Text</option>
+              <option value="StoredProcedure">Stored Procedure</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
+            <button className="btn-secondary" onClick={() => setShowAddDs(false)}>Cancel</button>
+            <button className="btn-primary" onClick={handleAddDs} disabled={saving}>{saving ? "Adding..." : "Add Dataset"}</button>
+          </div>
+        </div>
+      )}
+      
+      {(showAddParam || showAddDs) && <div onClick={() => { setShowAddParam(false); setShowAddDs(false); }} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.1)", zIndex: 90 }} />}
+    </div>
+  );
+}
+
+function ParameterCard({ parameter, isEditMode, rdlPath, onRefresh, onUpdateTabMetadata }: {
+  parameter: ReportParameter;
+  isEditMode: boolean;
+  rdlPath: string;
+  onRefresh: () => void;
+  onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  
+  // Editable fields
+  const [edited, setEdited] = useState<ReportParameter>({ ...parameter });
+
+  useEffect(() => {
+    setEdited({ ...parameter });
+  }, [parameter]);
+
+  const isDirty = JSON.stringify(edited) !== JSON.stringify(parameter);
+
+  useEffect(() => {
+    // Only update dirty state for this specific card
+    // Note: this is a bit tricky since many cards share onUpdateTabMetadata
+    // But usually only one is being edited at a time
+  }, [isDirty]);
+
+  const handleSave = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSaving(true);
+    try {
+      await invoke("update_rdl_parameter", { 
+        path: rdlPath, 
+        paramName: parameter.name, 
+        updated: edited 
+      });
+      const mtime = await invoke<number>("get_file_modified_time", { path: rdlPath });
+      onUpdateTabMetadata(rdlPath, { lastModified: mtime });
+      onRefresh();
+      setExpanded(false);
+    } catch (err) {
+      alert("Failed to save parameter: " + err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ border: "1px solid #e8e8e8", borderRadius: 3, overflow: "hidden" }}>
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "7px 12px", background: "#f7f7f7", cursor: "pointer",
+        }}
+        onMouseEnter={e => (e.currentTarget.style.background = "#f0f0f0")}
+        onMouseLeave={e => (e.currentTarget.style.background = "#f7f7f7")}
+      >
+        <span
+          className={`codicon ${expanded ? "codicon-chevron-down" : "codicon-chevron-right"}`}
+          style={{ fontSize: 12, color: "#777", flexShrink: 0 }}
+        />
+        <span style={{ fontFamily: "monospace", color: "#0000cc", fontSize: 13, fontWeight: 600 }}>@{parameter.name}</span>
+        <span style={{ color: "#888", fontSize: 12 }}>{parameter.dataType}</span>
+        <span style={{ color: "#555", fontSize: 12, flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{parameter.prompt}</span>
+
+        {parameter.defaultValue !== undefined && parameter.defaultValue !== null && parameter.defaultValue !== "" && (
+          <div style={{ marginLeft: "auto", marginRight: 10 }}>
+            <Badge label={parameter.defaultValue} color="#888" icon="codicon-symbol-constant" />
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+          {parameter.multiValue && <Badge label="Multi" color="#6b40bf" icon="codicon-layers" />}
+          {parameter.nullable && <Badge label="Null" color="#007acc" icon="codicon-question" />}
+          {parameter.hidden && <Badge label="Hidden" color="#666" icon="codicon-eye-closed" />}
+        </div>
+
+        {isEditMode && (
+          <button
+            onClick={e => { e.stopPropagation(); setExpanded(!expanded); }}
+            style={{ padding: "2px 6px", borderRadius: 3, color: "#007acc" }}
+          >
+            <span className="codicon codicon-edit" style={{ fontSize: 13 }} />
+          </button>
+        )}
+      </div>
+
+      {expanded && (
+        <div style={{ padding: 12, background: "#fff", borderTop: "1px solid #eee" }}>
+          {!isEditMode ? (
+            <div style={{ fontSize: 12, color: "#666" }}>
+              <div style={{ marginBottom: 4 }}><strong>Prompt:</strong> {parameter.prompt}</div>
+              <div style={{ marginBottom: 4 }}><strong>Data Type:</strong> {parameter.dataType}</div>
+              {parameter.defaultValue && <div style={{ marginBottom: 4 }}><strong>Default:</strong> {parameter.defaultValue}</div>}
+              {parameter.defaultValueQuery && <div style={{ marginBottom: 4 }}><strong>Default (Query):</strong> {parameter.defaultValueQuery.dataSetName}</div>}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 4 }}>Prompt</label>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      type="text"
+                      value={edited.prompt}
+                      onChange={e => setEdited({ ...edited, prompt: e.target.value })}
+                      style={{ paddingRight: 30 }}
+                    />
+                    <ExpressionPicker onSelect={val => setEdited({ ...edited, prompt: val })} />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 4 }}>Data Type</label>
+                  <select
+                    value={edited.dataType}
+                    onChange={e => setEdited({ ...edited, dataType: e.target.value as any })}
+                  >
+                    <option value="String">String</option>
+                    <option value="Integer">Integer</option>
+                    <option value="Float">Float</option>
+                    <option value="DateTime">DateTime</option>
+                    <option value="Boolean">Boolean</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 15 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={edited.nullable} onChange={e => setEdited({ ...edited, nullable: e.target.checked })} />
+                  Nullable
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={edited.allowBlank} onChange={e => setEdited({ ...edited, allowBlank: e.target.checked })} />
+                  Allow Blank
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={edited.multiValue} onChange={e => setEdited({ ...edited, multiValue: e.target.checked })} />
+                  Multi-value
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={edited.hidden} onChange={e => setEdited({ ...edited, hidden: e.target.checked })} />
+                  Hidden
+                </label>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+                <button
+                  onClick={() => setExpanded(false)}
+                  className="btn-secondary"
+                  style={{ fontSize: 12, padding: "3px 10px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !isDirty}
+                  className="btn-primary"
+                  style={{ fontSize: 12, padding: "3px 15px" }}
+                >
+                  {saving ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -467,6 +758,32 @@ function DatasetCard({ dataset, isEditMode, rdlPath, onRefresh, onUpdateTabMetad
             >
               <span className={`codicon ${saving ? "codicon-loading codicon-modifier-spin" : "codicon-save"}`} style={{ fontSize: 11 }} />
               Save
+            </button>
+          )}
+
+          {isEditMode && (
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                const confirmed = await ask(`Are you sure you want to delete dataset "${dataset.name}"? This cannot be undone.`, {
+                  title: "Delete Dataset",
+                  kind: "warning",
+                });
+                if (confirmed) {
+                  try {
+                    await invoke("remove_rdl_dataset", { path: rdlPath, datasetName: dataset.name });
+                    onRefresh();
+                  } catch (err) {
+                    alert("Delete failed: " + err);
+                  }
+                }
+              }}
+              title="Delete Dataset"
+              style={{ color: "#d93025", padding: "2px 6px", borderRadius: 3 }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(217,48,37,0.1)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+            >
+              <span className="codicon codicon-trash" style={{ fontSize: 13 }} />
             </button>
           )}
 
@@ -1997,6 +2314,55 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ExpressionPicker({ onSelect }: { onSelect: (val: string) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div style={{ position: "absolute", right: 5, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center" }}>
+      <button 
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        title="Expression Helper"
+        style={{ color: "#007acc", padding: 4 }}
+      >
+        <span className="codicon codicon-wand" style={{ fontSize: 13 }} />
+      </button>
+
+      {open && (
+        <>
+          <div 
+            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+            style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000 }} 
+          />
+          <div style={{ 
+            position: "absolute", top: "100%", right: 0, background: "#fff", border: "1px solid #ccc",
+            borderRadius: 4, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", zIndex: 1001, width: 250,
+            maxHeight: 300, overflowY: "auto", padding: "4px 0"
+          }}>
+            <div style={{ padding: "6px 12px", fontSize: 10, fontWeight: 600, color: "#999", borderBottom: "1px solid #eee" }}>COMMON EXPRESSIONS</div>
+            {RDL_EXPRESSIONS.map(ex => (
+              <div 
+                key={ex.label}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(ex.insertText);
+                  setOpen(false);
+                }}
+                style={{ padding: "6px 12px", cursor: "pointer", fontSize: 12 }}
+                className="tree-item"
+                onMouseEnter={e => (e.currentTarget.style.background = "#e8e8e8")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              >
+                <div style={{ fontWeight: 600, color: "#333" }}>{ex.label}</div>
+                <div style={{ fontSize: 10, color: "#888", fontFamily: "monospace" }}>{ex.insertText}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -9,6 +9,7 @@ interface ActivityItem {
 
 const items: ActivityItem[] = [
   { id: "explorer",  icon: "codicon-files",             title: "Explorer" },
+  { id: "search",    icon: "codicon-search",            title: "Search" },
   { id: "server",    icon: "codicon-cloud",              title: "Server" },
   { id: "sqleditor", icon: "codicon-terminal-powershell", title: "SQL Editor" },
 ];
@@ -43,6 +44,7 @@ export function ActivityBar({ active, onChange }: Props) {
                 onClick={() => onChange(item.id)}
                 onMouseEnter={() => setHovered(item.id)}
                 onMouseLeave={() => setHovered(null)}
+                className={`transition-all ${isActive ? "activity-item-active" : ""}`}
                 style={{
                   width: 48,
                   height: 48,
@@ -52,7 +54,7 @@ export function ActivityBar({ active, onChange }: Props) {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  color: isActive ? "#cccccc" : isHovered ? "#cccccc" : "#858585",
+                  color: isActive ? "#fff" : isHovered ? "#fff" : "#858585",
                 }}
               >
                 <span className={`codicon ${item.icon}`} style={{ fontSize: 22 }} />
