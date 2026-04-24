@@ -1410,10 +1410,20 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
     setExporting(formatId);
     setError(null);
     try {
+      const processedParams: Record<string, string | null> = {};
+      Object.keys(params).forEach(key => {
+        const val = params[key];
+        if (val === null) {
+          processedParams[key] = null;
+        } else if (val.trim() !== "") {
+          processedParams[key] = val;
+        }
+      });
+
       await invoke("ssrs_export", {
         url: ssrsUrl, username: ssrsUsername, password: ssrsPassword,
         reportPath: report.reportPath, format: formatId,
-        params
+        params: processedParams
       });
       onStatus("SSRS", `${label} exported`);
     } catch (e: any) {

@@ -237,7 +237,8 @@ pub async fn render_format(
     let client = make_client(username, password)?;
     let base = report_server_base(url);
     let path = if report_path.starts_with('/') { report_path.to_string() } else { format!("/{report_path}") };
-    let mut render_url = format!("{base}?{path}&rs:Command=Render&rs:Format={format}");
+    let encoded_path = urlencoding::encode(&path).replace("%2F", "/");
+    let mut render_url = format!("{base}?{encoded_path}&rs:Command=Render&rs:Format={format}");
 
     for (k, v) in params {
         match v {
