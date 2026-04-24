@@ -602,6 +602,12 @@ function SqlTesterView({
     if (selectedDs) setEditedRawSql(selectedDs.commandText || "");
   }, [selectedDs]);
 
+  useEffect(() => {
+    if (isEditMode && sqlMode === "formatted") {
+      setSqlMode("raw");
+    }
+  }, [isEditMode]);
+
   useHotkeys({
     "ctrl+enter": handleRun,
     "f5": handleRun,
@@ -1098,15 +1104,21 @@ function ParameterInput({
   allParams: Record<string, string | null>;
 }) {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [dynamicValues, setDynamicValues] = useState<ParameterValue[]>([]);
 
   const isNull = value === null;
   const ref = p.availableValues?.dataSetReference;
-  const ds = ref && metadata ? metadata.dataSets.find((d: DataSetInfo) => d.name.toLowerCase() === ref.dataSetName.toLowerCase()) : null;
+  const ds = useMemo(() => {
+    if (!ref || !metadata) return null;
+    return metadata.dataSets.find((d: DataSetInfo) => d.name.toLowerCase() === ref.dataSetName.toLowerCase()) || null;
+  }, [ref, metadata]);
   
   // Extract only the params that this dataset's query actually uses
-  const relevantParams: Record<string, string | null> = {};
-  if (ds) {
+  const relevantParams = useMemo(() => {
+    const res: Record<string, string | null> = {};
+    if (!ds) return res;
+
     if (ds.queryParameters && ds.queryParameters.length > 0) {
       // Use exact mapping from RDL
       ds.queryParameters.forEach((qp: QueryParameter) => {
@@ -1122,11 +1134,11 @@ function ParameterInput({
             if (val.toLowerCase() === "true") val = "1";
             else if (val.toLowerCase() === "false") val = "0";
           }
-          relevantParams[qp.name.replace('@', '')] = val;
+          res[qp.name.replace('@', '')] = val;
         }
       });
     } else if (ds.commandText) {
-      // Fallback
+      // Fallback: simple grep for @Param
       const sqlLower = ds.commandText.toLowerCase();
       for (const key of Object.keys(allParams)) {
         if (sqlLower.includes(`@${key.toLowerCase()}`)) {
@@ -1135,44 +1147,54 @@ function ParameterInput({
             if (val.toLowerCase() === "true") val = "1";
             else if (val.toLowerCase() === "false") val = "0";
           }
-          relevantParams[key] = val;
+          res[key] = val;
         }
       }
     }
-  }
+    return res;
+  }, [ds, allParams]);
+
   const relevantParamsKey = JSON.stringify(relevantParams);
 
   useEffect(() => {
-    const conn = connections.find(c => c.id === activeConnectionId);
+    if (!ref || !ds) return;
+    
+    let conn = connections.find(c => c.id === activeConnectionId);
+    if (!conn && connections.length > 0 && !activeConnectionId) {
+      conn = connections[0];
+    }
+    
     if (!conn) {
+      setError("No connection selected");
       return;
     }
     
-    if (ref && ds) {
-        setLoading(true);
-        invoke<QueryResult>("run_sql", {
-          sql: ds.commandText,
-          connectionString: conn.connectionString,
-          params: relevantParams,
-          isStoredProc: ds.commandType.toLowerCase().includes("stored"),
-        }).then(res => {
-          const getCaseInsensitive = (obj: any, key: string) => {
-            if (!key) return undefined;
-            const k = Object.keys(obj).find(k => k.toLowerCase() === key.toLowerCase());
-            return k ? obj[k] : undefined;
-          };
-          const list = res.rows.map(row => {
-            const lbl = getCaseInsensitive(row, ref.labelField) ?? getCaseInsensitive(row, ref.valueField) ?? "";
-            const val = getCaseInsensitive(row, ref.valueField) ?? "";
-            return { label: String(lbl), value: String(val) };
-          });
-          setDynamicValues(list);
-        }).catch(err => {
-          console.error("Failed to fetch dynamic values for parameter", p.name, err);
-          setDynamicValues([]);
-        }).finally(() => setLoading(false));
-      }
-  }, [ref?.dataSetName, activeConnectionId, relevantParamsKey]);
+    setLoading(true);
+    setError(null);
+    
+    invoke<QueryResult>("run_sql", {
+      sql: ds.commandText,
+      connectionString: conn.connectionString,
+      params: relevantParams,
+      isStoredProc: ds.commandType.toLowerCase().includes("stored"),
+    }).then(res => {
+      const getCaseInsensitive = (obj: any, key: string) => {
+        if (!key) return undefined;
+        const k = Object.keys(obj).find(k => k.toLowerCase() === key.toLowerCase());
+        return k ? obj[k] : undefined;
+      };
+      const list = res.rows.map(row => {
+        const lbl = getCaseInsensitive(row, ref.labelField) ?? getCaseInsensitive(row, ref.valueField) ?? "";
+        const val = getCaseInsensitive(row, ref.valueField) ?? "";
+        return { label: String(lbl), value: String(val) };
+      });
+      setDynamicValues(list);
+    }).catch(err => {
+      console.error("Failed to fetch dynamic values for parameter", p.name, err);
+      setError(String(err));
+      setDynamicValues([]);
+    }).finally(() => setLoading(false));
+  }, [ref?.dataSetName, activeConnectionId, relevantParamsKey, connections, ds?.commandText]);
 
   const hasAvailable = p.availableValues && (p.availableValues.staticValues.length > 0 || p.availableValues.dataSetReference);
   const options = (p.availableValues?.staticValues && p.availableValues.staticValues.length > 0) 
@@ -1235,22 +1257,30 @@ function ParameterInput({
   };
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ flex: 1 }}>{renderInput()}</div>
-      {p.nullable && (
-        <label style={{ 
-          display: "flex", alignItems: "center", gap: 4, fontSize: 11, 
-          color: isNull ? "#007fd4" : "#888", cursor: "pointer", whiteSpace: "nowrap",
-          userSelect: "none"
-        }}>
-          <input 
-            type="checkbox" 
-            checked={isNull} 
-            onChange={e => onChange(e.target.checked ? null : (p.defaultValue ?? ""))}
-            style={{ margin: 0, cursor: "pointer" }}
-          />
-          Null
-        </label>
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ flex: 1 }}>{renderInput()}</div>
+        {p.nullable && (
+          <label style={{ 
+            display: "flex", alignItems: "center", gap: 4, fontSize: 11, 
+            color: isNull ? "#007fd4" : "#888", cursor: "pointer", whiteSpace: "nowrap",
+            userSelect: "none"
+          }}>
+            <input 
+              type="checkbox" 
+              checked={isNull} 
+              onChange={e => onChange(e.target.checked ? null : (p.defaultValue ?? ""))}
+              style={{ margin: 0, cursor: "pointer" }}
+            />
+            Null
+          </label>
+        )}
+      </div>
+      {error && (
+        <div style={{ fontSize: 10, color: "#d32f2f", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+          <span className="codicon codicon-error" style={{ fontSize: 11 }} />
+          {error}
+        </div>
       )}
     </div>
   );
