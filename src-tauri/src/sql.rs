@@ -66,11 +66,18 @@ pub async fn run_sql(
             .collect();
         exec_stmt.push_str(&args.join(", "));
         exec_stmt
+    } else if declarations.is_empty() {
+        sql.to_string()
     } else {
         format!("{}\n{}", declarations, sql)
     };
 
-    let mut query = Query::new(final_sql);
+    // DDL statements (CREATE, ALTER, DROP, TRUNCATE, etc.) must be executed as a raw batch.
+    // Tiberius's parameterized Query API wraps the statement in a way SQL Server rejects for DDL.
+    // Check DDL BEFORE creating the Query (which moves final_sql).
+    let is_ddl = is_ddl_statement(&final_sql);
+
+    let mut query = Query::new(&final_sql);
     for (_, v) in &bound_params {
         match v {
             Some(s) => query.bind(s.as_str()),
@@ -78,15 +85,30 @@ pub async fn run_sql(
         }
     }
 
-    let stream = query
-        .query(&mut client)
-        .await
-        .map_err(|e| format!("Query failed: {e}"))?;
-
-    let rows_raw = stream
-        .into_results()
-        .await
-        .map_err(|e| format!("Failed to read results: {e}"))?;
+    let rows_raw: Vec<Vec<tiberius::Row>> = if is_ddl {
+        // DDL (CREATE/ALTER/DROP PROCEDURE etc.) must go through a raw SQL batch.
+        // Both client.execute() and client.query() use sp_executesql internally,
+        // which SQL Server refuses for DDL statements.
+        // client.simple_query() sends a TDS BatchRequest — same as SSMS.
+        let stream = client
+            .simple_query(final_sql.as_str())
+            .await
+            .map_err(|e| format!("Query failed: {e}"))?;
+        // Consume the stream to surface any SQL errors, but DDL returns no rows.
+        stream
+            .into_results()
+            .await
+            .map_err(|e| format!("Query failed: {e}"))?
+    } else {
+        let stream = query
+            .query(&mut client)
+            .await
+            .map_err(|e| format!("Query failed: {e}"))?;
+        stream
+            .into_results()
+            .await
+            .map_err(|e| format!("Failed to read results: {e}"))?
+    };
 
     let mut columns: Vec<String> = Vec::new();
     let mut rows: Vec<HashMap<String, serde_json::Value>> = Vec::new();
@@ -111,7 +133,41 @@ pub async fn run_sql(
     let row_count = rows.len();
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
-    Ok(QueryResult { columns, rows, row_count, elapsed_ms })
+    let (final_columns, final_rows, final_count) = if is_ddl && rows.is_empty() {
+        let cols = vec!["Status".to_string()];
+        let mut row = HashMap::new();
+        row.insert("Status".to_string(), serde_json::Value::String("Command(s) completed successfully.".to_string()));
+        (cols, vec![row], 0) // Keep count 0 but show message
+    } else {
+        (columns, rows, row_count)
+    };
+
+    Ok(QueryResult { 
+        columns: final_columns, 
+        rows: final_rows, 
+        row_count: final_count, 
+        elapsed_ms 
+    })
+}
+
+/// Returns true if the SQL starts with a DDL keyword that cannot be run via
+/// tiberius's parameterized Query API (it must be sent as a raw batch).
+fn is_ddl_statement(sql: &str) -> bool {
+    // Strip leading whitespace and single-line comments to find the real first keyword
+    let mut s = sql.trim_start();
+    // Skip single-line comments (-- ...)
+    while s.starts_with("--") {
+        s = s.find('\n').map(|i| &s[i + 1..]).unwrap_or("").trim_start();
+    }
+    // Skip block comments (/* ... */)
+    if s.starts_with("/*") {
+        s = s.find("*/").map(|i| &s[i + 2..]).unwrap_or("").trim_start();
+    }
+    let first = s.split_whitespace().next().unwrap_or("").to_uppercase();
+    matches!(
+        first.as_str(),
+        "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" | "GRANT" | "REVOKE" | "DENY"
+    )
 }
 
 fn col_data_to_json(data: ColumnData<'_>) -> serde_json::Value {

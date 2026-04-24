@@ -903,6 +903,9 @@ function SqlTesterView({
   const [copied, setCopied] = useState(false);
   const [editorHeight, setEditorHeight] = useState(160);
   const [isResizing, setIsResizing] = useState(false);
+  const startYRef = useRef(0);
+  const startHeightRef = useRef(160);
+  const editorRef = useRef<any>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [connExpanded, setConnExpanded] = useState(false);
   const [sqlMode, setSqlMode] = useState<"formatted" | "raw">("formatted");
@@ -959,18 +962,17 @@ function SqlTesterView({
 
   const startResizing = (e: React.MouseEvent) => {
     setIsResizing(true);
+    startYRef.current = e.clientY;
+    startHeightRef.current = editorHeight;
     e.preventDefault();
   };
 
   useEffect(() => {
     if (!isResizing) return;
     const handleMouseMove = (e: MouseEvent) => {
-      const container = document.getElementById("sql-tester-editor-container");
-      if (container) {
-        const rect = container.getBoundingClientRect();
-        const newHeight = Math.max(80, Math.min(window.innerHeight - 300, e.clientY - rect.top));
-        setEditorHeight(newHeight);
-      }
+      const dy = e.clientY - startYRef.current;
+      const newHeight = Math.max(80, Math.min(window.innerHeight - 100, startHeightRef.current + dy));
+      setEditorHeight(newHeight);
     };
     const handleMouseUp = () => setIsResizing(false);
     window.addEventListener("mousemove", handleMouseMove);
@@ -1070,9 +1072,20 @@ function SqlTesterView({
         }
         paramMap[p.name] = val; 
       });
-      const finalSql = defaultSafeRun 
-        ? `BEGIN TRANSACTION;\n${selectedDs.commandText}\nROLLBACK;` 
-        : selectedDs.commandText;
+      const selection = editorRef.current?.getSelection();
+      const selectedText = editorRef.current?.getModel()?.getValueInRange(selection);
+      const sqlToRun = (selectedText && selectedText.trim()) ? selectedText : selectedDs.commandText;
+      
+      const cleanSql = (sqlToRun || "")
+        .replace(/--.*$/gm, "") // line comments
+        .replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+        .trim();
+      const isDDL = /^(CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\b/i.test(cleanSql);
+
+      const isSafeApplied = defaultSafeRun && !isDDL;
+      const finalSql = isSafeApplied
+        ? `BEGIN TRANSACTION;\n${sqlToRun}\nROLLBACK;` 
+        : sqlToRun;
 
       const res = await invoke<QueryResult>("run_sql", {
         sql: finalSql,
@@ -1082,7 +1095,7 @@ function SqlTesterView({
         database: selectedDb || null,
       });
       setResult(res);
-      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${defaultSafeRun ? " (Safe)" : ""}`);
+      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${isSafeApplied ? " (Safe)" : ""}`);
     } catch (e: any) {
       setError(String(e));
       onStatus("", "Error");
@@ -1304,6 +1317,7 @@ function SqlTesterView({
                 }}
                 theme="vs"
                 onMount={(editor, monaco) => {
+                  editorRef.current = editor;
                   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
                     if (isEditMode && sqlMode === "raw") {
                       handleSave();
@@ -1336,16 +1350,19 @@ function SqlTesterView({
                 Switch to <strong>Raw</strong> mode to edit the SQL dataset
               </div>
             )}
+            {isResizing && (
+              <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, cursor: "ns-resize" }} />
+            )}
             {/* Resizer Handle */}
             <div 
               onMouseDown={startResizing}
               style={{
-                height: 4, cursor: "ns-resize", 
+                height: 10, cursor: "ns-resize", 
                 background: isResizing ? "#007fd4" : "transparent",
-                position: "absolute", bottom: -2, left: 0, right: 0, zIndex: 10,
+                position: "absolute", bottom: -5, left: 0, right: 0, zIndex: 100,
                 transition: "background 0.1s"
               }}
-              onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.3)"; }}
+              onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.4)"; }}
               onMouseLeave={e => { if (!isResizing) e.currentTarget.style.background = "transparent"; }}
             />
             <button
@@ -2075,6 +2092,9 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
   const [loading, setLoading] = useState(true);
   const [editorHeight, setEditorHeight] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
+  const startYRef = useRef(0);
+  const startHeightRef = useRef(300);
+  const editorRef = useRef<any>(null);
 
   const getInitialCatalog = (connStr: string) => {
     const match = connStr.match(/(?:Initial Catalog|Database)=([^;]+)/i);
@@ -2136,7 +2156,19 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
     setRunning(true);
     setError(null);
     try {
-      const finalSql = safeRun 
+      const selection = editorRef.current?.getSelection();
+      const selectedText = editorRef.current?.getModel()?.getValueInRange(selection);
+      const sqlToRun = (selectedText && selectedText.trim()) ? selectedText : sql;
+      const trimmedSql = sqlToRun.trim();
+
+      const cleanSql = trimmedSql
+        .replace(/--.*$/gm, "") // line comments
+        .replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+        .trim();
+      const isDDL = /^(CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\b/i.test(cleanSql);
+
+      const isSafeApplied = safeRun && !isDDL;
+      const finalSql = isSafeApplied
         ? `BEGIN TRANSACTION;\n${trimmedSql}\nROLLBACK;` 
         : trimmedSql;
 
@@ -2148,7 +2180,7 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
         database: selectedDb || null,
       });
       setResult(res);
-      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${safeRun ? " (Safe)" : ""}`);
+      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${isSafeApplied ? " (Safe)" : ""}`);
     } catch (e: any) {
       setError(String(e));
       onStatus("", "Error");
@@ -2172,7 +2204,8 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
   useEffect(() => {
     if (!isResizing) return;
     const handleMouseMove = (e: MouseEvent) => {
-      const newHeight = Math.max(100, e.clientY - 80);
+      const dy = e.clientY - startYRef.current;
+      const newHeight = Math.max(100, Math.min(window.innerHeight - 100, startHeightRef.current + dy));
       setEditorHeight(newHeight);
     };
     const handleMouseUp = () => setIsResizing(false);
@@ -2272,6 +2305,7 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
           onChange={val => setSql(val || "")}
           theme="vs"
           onMount={(editor, monaco) => {
+            editorRef.current = editor;
             editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
               handleSave();
             });
@@ -2284,11 +2318,19 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
             scrollBeyondLastLine: false,
           }}
         />
+        {isResizing && (
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, cursor: "ns-resize" }} />
+        )}
         <div
-          onMouseDown={() => setIsResizing(true)}
+          onMouseDown={(e) => {
+            setIsResizing(true);
+            startYRef.current = e.clientY;
+            startHeightRef.current = editorHeight;
+            e.preventDefault();
+          }}
           style={{
-            position: "absolute", bottom: -3, left: 0, right: 0, height: 6,
-            cursor: "ns-resize", zIndex: 10,
+            position: "absolute", bottom: -5, left: 0, right: 0, height: 10,
+            cursor: "ns-resize", zIndex: 100,
           }}
         />
       </div>

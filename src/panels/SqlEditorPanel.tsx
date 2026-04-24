@@ -43,7 +43,10 @@ export function SqlEditorPanel({
   const [error, setError] = useState<string | null>(null);
   const [editorHeight, setEditorHeight] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
+  const startYRef = useRef(0);
+  const startHeightRef = useRef(300);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const editorRef = useRef<any>(null);
 
   const toggleFolder = (path: string) => {
     setCollapsedFolders(prev => {
@@ -143,18 +146,17 @@ export function SqlEditorPanel({
 
   const startResizing = (e: React.MouseEvent) => {
     setIsResizing(true);
+    startYRef.current = e.clientY;
+    startHeightRef.current = editorHeight;
     e.preventDefault();
   };
 
   useEffect(() => {
     if (!isResizing) return;
     const handleMouseMove = (e: MouseEvent) => {
-      const container = document.getElementById("sql-editor-container");
-      if (container) {
-        const rect = container.getBoundingClientRect();
-        const newHeight = Math.max(100, Math.min(window.innerHeight - 300, e.clientY - rect.top));
-        setEditorHeight(newHeight);
-      }
+      const dy = e.clientY - startYRef.current;
+      const newHeight = Math.max(100, Math.min(window.innerHeight - 100, startHeightRef.current + dy));
+      setEditorHeight(newHeight);
     };
     const handleMouseUp = () => setIsResizing(false);
     window.addEventListener("mousemove", handleMouseMove);
@@ -194,16 +196,27 @@ export function SqlEditorPanel({
   }
 
   async function handleRun() {
-    const trimmedSql = sql.trim();
+    const selection = editorRef.current?.getSelection();
+    const selectedText = editorRef.current?.getModel()?.getValueInRange(selection);
+    const sqlToRun = (selectedText && selectedText.trim()) ? selectedText : sql;
+    const trimmedSql = sqlToRun.trim();
     if (!trimmedSql) return;
+
     const conn = connections.find(c => c.id === connId);
     if (!conn) return;
 
     setRunning(true);
     setError(null);
     try {
-      // Use Safe Run based on settings
-      const finalSql = defaultSafeRun 
+      // Strip comments to accurately detect DDL keyword at start
+      const cleanSql = trimmedSql
+        .replace(/--.*$/gm, "") // line comments
+        .replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+        .trim();
+      const isDDL = /^(CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\b/i.test(cleanSql);
+      
+      const isSafeApplied = defaultSafeRun && !isDDL;
+      const finalSql = isSafeApplied
         ? `BEGIN TRANSACTION;\n${trimmedSql}\nROLLBACK;` 
         : trimmedSql;
 
@@ -216,7 +229,7 @@ export function SqlEditorPanel({
       });
       setResult(res);
       setError(null);
-      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${defaultSafeRun ? " (Safe)" : ""}`);
+      onStatus(conn.name, `${res.rowCount} rows · ${res.elapsedMs}ms${isSafeApplied ? " (Safe)" : ""}`);
       
       addToHistory({
         sql: trimmedSql,
@@ -224,6 +237,7 @@ export function SqlEditorPanel({
         connectionName: conn.name
       });
     } catch (err: any) {
+      setResult(null);
       setError(String(err));
       onStatus("", "Error");
     } finally {
@@ -666,8 +680,9 @@ export function SqlEditorPanel({
         )}
 
         {/* SQL Monaco Editor */}
-        <div id="sql-editor-container" style={{ position: "relative", flex: `0 0 ${editorHeight}px`, borderBottom: "1px solid #e8e8e8" }}>
-          <Editor
+        <div id="sql-editor-container" style={{ position: "relative", flexShrink: 0, borderBottom: "1px solid #e8e8e8" }}>
+          <div style={{ height: editorHeight }}>
+            <Editor
             height="100%"
             defaultLanguage="sql"
             value={sql}
@@ -678,6 +693,7 @@ export function SqlEditorPanel({
               setSql(val || "");
             }}
             onMount={(editor, monaco) => {
+              editorRef.current = editor;
               // Dispose previous provider if exists
               if (completionProviderRef.current) {
                 completionProviderRef.current.dispose();
@@ -742,16 +758,20 @@ export function SqlEditorPanel({
               padding: { top: 10, bottom: 10 }
             }}
           />
+          </div>
+          {isResizing && (
+            <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, cursor: "ns-resize" }} />
+          )}
           {/* Resizer Handle */}
           <div 
             onMouseDown={startResizing}
             style={{
-              height: 4, cursor: "ns-resize", 
+              height: 10, cursor: "ns-resize", 
               background: isResizing ? "#007fd4" : "transparent",
-              position: "absolute", bottom: -2, left: 0, right: 0, zIndex: 10,
+              position: "absolute", bottom: -5, left: 0, right: 0, zIndex: 100,
               transition: "background 0.1s"
             }}
-            onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.3)"; }}
+            onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.4)"; }}
             onMouseLeave={e => { if (!isResizing) e.currentTarget.style.background = "transparent"; }}
           />
         </div>

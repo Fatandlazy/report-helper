@@ -355,6 +355,7 @@ pub fn run() {
             add_rdl_parameter,
             add_rdl_dataset,
             search_in_files,
+            read_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
