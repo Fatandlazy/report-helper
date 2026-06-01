@@ -1197,10 +1197,13 @@ function SqlTesterView({
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {params.map(p => (
                 <div key={p.name}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
                     <div style={{ fontSize: 12, fontFamily: "monospace", color: "#0000cc" }}>@{p.name}</div>
                     {p.hidden && <span className="codicon codicon-eye-closed" style={{ fontSize: 11, color: "#999" }} title="Hidden" />}
                   </div>
+                  {p.prompt && p.prompt !== p.name && (
+                    <div style={{ fontSize: 11, color: "#666", marginBottom: 3, lineHeight: 1.3 }}>{p.prompt}</div>
+                  )}
                   
                   <ParameterInput 
                     p={p as any} 
