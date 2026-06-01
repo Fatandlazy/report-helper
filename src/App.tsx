@@ -22,7 +22,7 @@ export default function App() {
     settings, setSection, updateSettings,
     addWorkspaceFolder, removeWorkspaceFolder,
     addConnection, removeConnection, updateConnection,
-    toggleHiddenSsrsPath, toggleHiddenLocalPath, importSettings, addToHistory,
+    toggleHiddenSsrsPath, toggleHiddenLocalPath, addToHistory,
   } = useSettings();
 
   const { 
@@ -51,7 +51,7 @@ export default function App() {
     }
   });
   
-  const [reloadCounter, setReloadCounter] = useState(0);
+  const [reloadKeys, setReloadKeys] = useState<Record<string, number>>({});
 
   // File change detection for tabs
   useEffect(() => {
@@ -70,7 +70,7 @@ export default function App() {
 
           if (confirmed) {
             updateTabMetadata(activeTab.id, { lastModified: mtime });
-            setReloadCounter(c => c + 1);
+            setReloadKeys(prev => ({ ...prev, [activeTab.id]: (prev[activeTab.id] ?? 0) + 1 }));
           } else {
             // Update timestamp anyway to stop asking until next change
             updateTabMetadata(activeTab.id, { lastModified: mtime });
@@ -250,7 +250,6 @@ export default function App() {
             <SettingsPanel
               settings={settings}
               onUpdateSettings={updateSettings}
-              onImportSettings={importSettings}
               onAddConnection={addConnection}
               onRemoveConnection={removeConnection}
             />
@@ -268,22 +267,26 @@ export default function App() {
               onCloseAll={handleCloseAll}
             />
             <div className="flex-1 overflow-hidden">
-              {activeTab ? (
-                <ReportTabContent
-                  key={`${activeTab.id}-${reloadCounter}`}
-                  tab={activeTab}
-                  connections={settings.connections}
-                  activeConnectionId={settings.activeConnectionId}
-                  ssrsUrl={settings.ssrsUrl}
-                  ssrsUsername={settings.ssrsUsername}
-                  ssrsPassword={settings.ssrsPassword}
-                  onViewChange={handleTabViewChange}
-                  onStatus={onStatus}
-                  defaultSafeRun={settings.defaultSafeRun}
-                  onUpdateTabMetadata={updateTabsByPath}
-                />
-              ) : (
+              {tabs.length === 0 ? (
                 <WelcomeScreen section={section} />
+              ) : (
+                tabs.map(tab => (
+                  <div key={tab.id} style={{ display: tab.id === activeId ? "flex" : "none", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+                    <ReportTabContent
+                      tab={tab}
+                      connections={settings.connections}
+                      activeConnectionId={settings.activeConnectionId}
+                      ssrsUrl={settings.ssrsUrl}
+                      ssrsUsername={settings.ssrsUsername}
+                      ssrsPassword={settings.ssrsPassword}
+                      onViewChange={handleTabViewChange}
+                      onStatus={onStatus}
+                      defaultSafeRun={settings.defaultSafeRun}
+                      onUpdateTabMetadata={updateTabsByPath}
+                      reloadKey={reloadKeys[tab.id] ?? 0}
+                    />
+                  </div>
+                ))
               )}
             </div>
           </div>
