@@ -1028,7 +1028,7 @@ function SqlTesterView({
 
   useEffect(() => {
     if (selectedDs) buildParams(selectedDs);
-  }, [selectedDs?.name]);
+  }, [selectedDs?.name, metadata]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-size sidebar to fit longest prompt using a real DOM measurement
   useEffect(() => {
@@ -1226,7 +1226,7 @@ function SqlTesterView({
               </label>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {params.map(p => (
+              {params.filter(p => !p.hidden).map(p => (
                 <div key={p.name} style={{
                   background: "#fff",
                   border: "1px solid #e0e0e0",
@@ -1255,12 +1255,48 @@ function SqlTesterView({
                     <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 6 }}>
                       <span style={{ fontSize: 10, color: "#007fd4", fontFamily: "monospace", background: "#eef7ff", padding: "1px 4px", borderRadius: 2 }}>@{p.name}</span>
                       <span style={{ fontSize: 10, color: "#888", fontWeight: 500 }}>{(p as any).dataType}</span>
-                      {p.hidden && <span className="codicon codicon-eye-closed" style={{ fontSize: 10, color: "#999" }} title="Hidden" />}
                     </div>
                   )}
                 </div>
               ))}
             </div>
+
+            {showTechInfo && params.some(p => p.hidden) && (
+              <div style={{ marginTop: 8, borderTop: "1px dashed #e0e0e0", paddingTop: 8 }}>
+                <div style={{ fontSize: 10, color: "#999", marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                  <span className="codicon codicon-eye-closed" style={{ fontSize: 10 }} />
+                  Hidden Parameters
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {params.filter(p => p.hidden).map(p => (
+                    <div key={p.name} style={{
+                      background: "#fafafa",
+                      border: "1px dashed #ddd",
+                      borderRadius: 6,
+                      padding: "10px 12px",
+                      opacity: 0.8,
+                    }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#888", marginBottom: 6, lineHeight: 1.4 }}>
+                        {p.prompt || p.name}
+                      </div>
+                      <ParameterInput 
+                        p={p as any} 
+                        value={p.value} 
+                        onChange={val => setParams(ps => ps.map(x => x.name === p.name ? { ...x, value: val } : x))}
+                        metadata={metadata}
+                        connections={connections}
+                        activeConnectionId={connId}
+                        allParams={Object.fromEntries(params.map(x => [x.name, x.value ?? ""]))}
+                      />
+                      <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 10, color: "#007fd4", fontFamily: "monospace", background: "#eef7ff", padding: "1px 4px", borderRadius: 2 }}>@{p.name}</span>
+                        <span style={{ fontSize: 10, color: "#888", fontWeight: 500 }}>{(p as any).dataType}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1600,9 +1636,12 @@ function ParameterInput({
             disabled={loading || isNull}
             style={{ width: "100%", fontSize: 12 }}
           >
-            {loading && <option>Loading...</option>}
-            {!loading && options.length === 0 && !p.nullable && <option>No values found</option>}
-            {options.map((opt: ParameterValue, i: number) => (
+            {loading && <option value="">Loading…</option>}
+            {!loading && options.length === 0 && <option value="">— No values —</option>}
+            {!loading && options.length > 0 && !options.some(o => o.value === (value ?? "")) && (
+              <option value="">— Select —</option>
+            )}
+            {!loading && options.map((opt: ParameterValue, i: number) => (
               <option key={i} value={opt.value}>{opt.label || opt.value}</option>
             ))}
           </select>
@@ -1830,29 +1869,18 @@ function PreviewView({ tab, metadata, ssrsUrl, ssrsUsername, ssrsPassword, conne
   // Auto-resize on metadata change
   useEffect(() => {
     if (metadata?.parameters && metadata.parameters.length > 0) {
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
-      let maxTextWidth = 0;
-      
-      if (context) {
-        // Match the label style: 13px, Semi-Bold (600)
-        context.font = "600 13px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif";
-        metadata.parameters.forEach(p => {
-          const text = p.prompt || p.name;
-          const width = context.measureText(text).width;
-          if (width > maxTextWidth) maxTextWidth = width;
-        });
-      } else {
-        // Fallback to heuristic
-        metadata.parameters.forEach(p => {
-          const text = p.prompt || p.name;
-          if (text.length * 8 > maxTextWidth) maxTextWidth = text.length * 8;
-        });
-      }
-
-      // 12px padding * 2 (container) + 12px padding * 2 (card) + buffer
-      const idealWidth = Math.min(Math.max(280, maxTextWidth + 64), 800);
-      setSidebarWidth(idealWidth);
+      const ruler = document.createElement("span");
+      ruler.style.cssText = "position:fixed;visibility:hidden;white-space:nowrap;font:600 13px Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
+      document.body.appendChild(ruler);
+      let maxW = 0;
+      metadata.parameters.forEach(p => {
+        ruler.textContent = p.prompt || p.name;
+        const w = ruler.getBoundingClientRect().width;
+        if (w > maxW) maxW = w;
+      });
+      document.body.removeChild(ruler);
+      // card padding (12px*2) + sidebar padding (12px*2) + scrollbar + safety
+      setSidebarWidth(Math.min(Math.max(280, Math.ceil(maxW) + 80), 800));
     }
   }, [metadata]);
 
@@ -2352,7 +2380,7 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
       )}
 
       {/* Editor */}
-      <div style={{ height: editorHeight, borderBottom: "1px solid #ddd", position: "relative" }}>
+      <div style={{ height: editorHeight, position: "relative" }}>
         <Editor
           height="100%"
           defaultLanguage="sql"
@@ -2373,22 +2401,28 @@ function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSa
             scrollBeyondLastLine: false,
           }}
         />
-        {isResizing && (
-          <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, cursor: "ns-resize" }} />
-        )}
-        <div
-          onMouseDown={(e) => {
-            setIsResizing(true);
-            startYRef.current = e.clientY;
-            startHeightRef.current = editorHeight;
-            e.preventDefault();
-          }}
-          style={{
-            position: "absolute", bottom: -5, left: 0, right: 0, height: 10,
-            cursor: "ns-resize", zIndex: 100,
-          }}
-        />
       </div>
+      {/* Resizer Handle — sibling of editor so it's never clipped */}
+      <div
+        onMouseDown={(e) => {
+          setIsResizing(true);
+          startYRef.current = e.clientY;
+          startHeightRef.current = editorHeight;
+          e.preventDefault();
+        }}
+        style={{
+          height: 6, flexShrink: 0, cursor: "ns-resize",
+          background: isResizing ? "#007fd4" : "transparent",
+          borderTop: "1px solid #e8e8e8",
+          borderBottom: "1px solid #e8e8e8",
+          transition: "background 0.1s",
+        }}
+        onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.3)"; }}
+        onMouseLeave={e => { if (!isResizing) e.currentTarget.style.background = "transparent"; }}
+      />
+      {isResizing && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, cursor: "ns-resize" }} />
+      )}
 
       {/* Results */}
       <div style={{ flex: 1, overflow: "auto", position: "relative" }}>
