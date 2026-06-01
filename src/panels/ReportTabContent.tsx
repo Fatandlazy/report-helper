@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
-import { ReportTab, TabView, ReportMetadata, DataSetInfo, DbConnection, QueryResult, ReportParameter, ParameterValue, DataSourceInfo, QueryParameter } from "../types";
+import { ReportTab, TabView, ReportMetadata, DataSetInfo, DbConnection, QueryResult, ReportParameter, ParameterValue, AvailableValues, DataSourceInfo, QueryParameter } from "../types";
 import { useHotkeys } from "../hooks/useHotkeys";
 import { RDL_EXPRESSIONS } from "../data/expressions";
 
@@ -18,6 +18,7 @@ interface Props {
   onStatus: (left: string, right: string) => void;
   defaultSafeRun: boolean;
   onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
+  reloadKey?: number;
 }
 
 const VIEWS: { id: TabView; label: string; icon: string }[] = [
@@ -28,7 +29,7 @@ const VIEWS: { id: TabView; label: string; icon: string }[] = [
 
 export function ReportTabContent({ 
   tab, connections, activeConnectionId, ssrsUrl, ssrsUsername, ssrsPassword, 
-  onViewChange, onStatus, defaultSafeRun, onUpdateTabMetadata 
+  onViewChange, onStatus, defaultSafeRun, onUpdateTabMetadata, reloadKey 
 }: Props) {
   const [metadata, setMetadata] = useState<ReportMetadata | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export function ReportTabContent({
     invoke<ReportMetadata>("parse_rdl", { path: tab.path })
       .then(m => { setMetadata(m); setLoading(false); })
       .catch(e => { setMetaError(String(e)); setLoading(false); });
-  }, [tab.path]);
+  }, [tab.path, reloadKey]);
 
   const refreshMetadata = async () => {
     setLoading(true);
@@ -194,7 +195,7 @@ export function ReportTabContent({
 
         {!isServerTab && !loading && !metaError && metadata && !isSqlFile && (
           <>
-            {tab.activeView === "overview"  && (
+            <div style={{ display: tab.activeView === "overview" ? "contents" : "none" }}>
               <OverviewView 
                 metadata={metadata} 
                 isEditMode={isEditMode}
@@ -206,8 +207,8 @@ export function ReportTabContent({
                   onViewChange("sqltester");
                 }}
               />
-            )}
-            {tab.activeView === "sqltester" && (
+            </div>
+            <div style={{ display: tab.activeView === "sqltester" ? "contents" : "none" }}>
               <SqlTesterView 
                 metadata={metadata} 
                 connections={connections} 
@@ -221,8 +222,8 @@ export function ReportTabContent({
                 onRefresh={refreshMetadata}
                 onUpdateTabMetadata={onUpdateTabMetadata}
               />
-            )}
-            {tab.activeView === "preview"   && (
+            </div>
+            <div style={{ display: tab.activeView === "preview" ? "contents" : "none" }}>
               <PreviewView   
                 tab={tab} 
                 metadata={metadata} 
@@ -233,7 +234,7 @@ export function ReportTabContent({
                 ssrsPassword={ssrsPassword} 
                 onStatus={onStatus} 
               />
-            )}
+            </div>
           </>
         )}
       </div>
@@ -860,7 +861,7 @@ function DatasetCard({ dataset, isEditMode, rdlPath, onRefresh, onUpdateTabMetad
 
 /* ─── SQL Tester ────────────────────────────────────────────────────────── */
 
-interface ParamValue { name: string; prompt: string; dataType: string; value: string | null; nullable?: boolean; hidden?: boolean; }
+interface ParamValue { name: string; prompt: string; dataType: string; value: string | null; nullable?: boolean; hidden?: boolean; availableValues?: AvailableValues; }
 
 function SqlTesterView({ 
   metadata, connections, activeConnectionId, onStatus, 
@@ -908,6 +909,8 @@ function SqlTesterView({
   const editorRef = useRef<any>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [connExpanded, setConnExpanded] = useState(false);
+  const [showTechInfo, setShowTechInfo] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(240);
   const [sqlMode, setSqlMode] = useState<"formatted" | "raw">("formatted");
   const [editedRawSql, setEditedRawSql] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1027,6 +1030,23 @@ function SqlTesterView({
     if (selectedDs) buildParams(selectedDs);
   }, [selectedDs?.name]);
 
+  // Auto-size sidebar to fit longest prompt using a real DOM measurement
+  useEffect(() => {
+    if (params.length === 0) return;
+    const ruler = document.createElement("span");
+    ruler.style.cssText = "position:fixed;visibility:hidden;white-space:nowrap;font:600 12px Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
+    document.body.appendChild(ruler);
+    let maxW = 0;
+    params.forEach(p => {
+      ruler.textContent = p.prompt || p.name;
+      const w = ruler.getBoundingClientRect().width;
+      if (w > maxW) maxW = w;
+    });
+    document.body.removeChild(ruler);
+    // card padding (12px*2) + sidebar padding (12px*2) + scrollbar (17px) + safety (15px)
+    setSidebarWidth(Math.min(Math.max(200, Math.ceil(maxW) + 80), 520));
+  }, [params]);
+
   function buildParams(ds: DataSetInfo) {
     const sql = ds.commandText ?? "";
     let relevant: ReportParameter[] = [];
@@ -1050,7 +1070,8 @@ function SqlTesterView({
       dataType: p.dataType, 
       value: p.defaultValue ?? (p.nullable ? null : ""),
       nullable: p.nullable,
-      hidden: p.hidden
+      hidden: p.hidden,
+      availableValues: p.availableValues,
     })));
     setResult(null);
     setError(null);
@@ -1129,7 +1150,7 @@ function SqlTesterView({
       {/* Controls */}
       {sidebarVisible && (
         <div style={{
-          width: 240, flexShrink: 0, borderRight: "1px solid #e8e8e8",
+          width: sidebarWidth, flexShrink: 0, borderRight: "1px solid #e8e8e8",
           background: "#f8f8f8", overflowY: "auto", padding: "12px",
           display: "flex", flexDirection: "column", gap: 12,
         }}>
@@ -1192,15 +1213,34 @@ function SqlTesterView({
 
         {params.length > 0 && (
           <div>
-            <label style={{ display: "block", fontSize: 11, color: "#666", marginBottom: 6 }}>Parameters</label>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: "#666" }}>Parameters</span>
+              <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={showTechInfo}
+                  onChange={e => setShowTechInfo(e.target.checked)}
+                  style={{ width: 12, height: 12, margin: 0 }}
+                />
+                <span style={{ fontSize: 10, color: "#666", fontWeight: 500 }}>Technical Info</span>
+              </label>
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {params.map(p => (
-                <div key={p.name}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                    <div style={{ fontSize: 12, fontFamily: "monospace", color: "#0000cc" }}>@{p.name}</div>
-                    {p.hidden && <span className="codicon codicon-eye-closed" style={{ fontSize: 11, color: "#999" }} title="Hidden" />}
+                <div key={p.name} style={{
+                  background: "#fff",
+                  border: "1px solid #e0e0e0",
+                  borderRadius: 6,
+                  padding: "10px 12px",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "#007fd4"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "#e0e0e0"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.02)"; }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#1a1a1a", marginBottom: 6, lineHeight: 1.4 }}>
+                    {p.prompt || p.name}
                   </div>
-                  
+
                   <ParameterInput 
                     p={p as any} 
                     value={p.value} 
@@ -1210,6 +1250,14 @@ function SqlTesterView({
                     activeConnectionId={connId}
                     allParams={Object.fromEntries(params.map(x => [x.name, x.value ?? ""]))}
                   />
+
+                  {showTechInfo && (
+                    <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 10, color: "#007fd4", fontFamily: "monospace", background: "#eef7ff", padding: "1px 4px", borderRadius: 2 }}>@{p.name}</span>
+                      <span style={{ fontSize: 10, color: "#888", fontWeight: 500 }}>{(p as any).dataType}</span>
+                      {p.hidden && <span className="codicon codicon-eye-closed" style={{ fontSize: 10, color: "#999" }} title="Hidden" />}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1303,8 +1351,8 @@ function SqlTesterView({
           </div>
         </div>
         {selectedDs && (
-          <div id="sql-tester-editor-container" style={{ position: "relative", flexShrink: 0, borderBottom: "1px solid #e8e8e8" }}>
-            <div style={{ height: editorHeight, borderBottom: "1px solid #e8e8e8" }}>
+          <div id="sql-tester-editor-container" style={{ position: "relative", flexShrink: 0 }}>
+            <div style={{ height: editorHeight }}>
               <Editor
                 key={sqlMode}
                 height="100%"
@@ -1350,21 +1398,6 @@ function SqlTesterView({
                 Switch to <strong>Raw</strong> mode to edit the SQL dataset
               </div>
             )}
-            {isResizing && (
-              <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, cursor: "ns-resize" }} />
-            )}
-            {/* Resizer Handle */}
-            <div 
-              onMouseDown={startResizing}
-              style={{
-                height: 10, cursor: "ns-resize", 
-                background: isResizing ? "#007fd4" : "transparent",
-                position: "absolute", bottom: -5, left: 0, right: 0, zIndex: 100,
-                transition: "background 0.1s"
-              }}
-              onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.4)"; }}
-              onMouseLeave={e => { if (!isResizing) e.currentTarget.style.background = "transparent"; }}
-            />
             <button
               onClick={handleCopySql}
               title="Copy SQL"
@@ -1380,6 +1413,28 @@ function SqlTesterView({
               <span className={`codicon ${copied ? "codicon-check" : "codicon-copy"}`} style={{ fontSize: 14 }} />
             </button>
           </div>
+        )}
+
+        {/* Resizer Handle — sibling of editor container so it's never clipped */}
+        {selectedDs && (
+          <div
+            onMouseDown={startResizing}
+            style={{
+              height: 6, flexShrink: 0, cursor: "ns-resize",
+              background: isResizing ? "#007fd4" : "transparent",
+              borderTop: "1px solid #e8e8e8",
+              borderBottom: "1px solid #e8e8e8",
+              transition: "background 0.1s",
+              zIndex: 10,
+            }}
+            onMouseEnter={e => { if (!isResizing) e.currentTarget.style.background = "rgba(0,127,212,0.3)"; }}
+            onMouseLeave={e => { if (!isResizing) e.currentTarget.style.background = "transparent"; }}
+          />
+        )}
+
+        {/* Full-screen drag overlay to keep cursor during resize */}
+        {isResizing && (
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, cursor: "ns-resize" }} />
         )}
 
         {error && (

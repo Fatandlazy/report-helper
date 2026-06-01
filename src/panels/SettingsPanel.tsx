@@ -7,13 +7,12 @@ import { useState, useEffect } from "react";
 interface Props {
   settings: AppSettings;
   onUpdateSettings: (updates: Partial<AppSettings>) => void;
-  onImportSettings: (settings: AppSettings) => void;
   onAddConnection: (c: DbConnection) => void;
   onRemoveConnection: (id: string) => void;
 }
 
 export function SettingsPanel({ 
-  settings, onUpdateSettings, onImportSettings,
+  settings, onUpdateSettings,
   onAddConnection, onRemoveConnection 
 }: Props) {
   const { ssrsUrl, ssrsUsername, ssrsPassword, connections } = settings;
@@ -30,7 +29,14 @@ export function SettingsPanel({
         defaultPath: "reporting-tools-settings.json"
       });
       if (path) {
-        await invoke("write_text_file", { path, content: JSON.stringify(settings, null, 2) });
+        const exportData = {
+          connections: settings.connections,
+          ssrsUrl: settings.ssrsUrl,
+          ssrsUsername: settings.ssrsUsername,
+          ssrsPassword: settings.ssrsPassword,
+          defaultSafeRun: settings.defaultSafeRun,
+        };
+        await invoke("write_text_file", { path, content: JSON.stringify(exportData, null, 2) });
       }
     } catch (e) {
       alert(`Export failed: ${e}`);
@@ -47,7 +53,13 @@ export function SettingsPanel({
         const content = await invoke<string>("read_text_file", { path });
         const parsed = JSON.parse(content);
         if (parsed && typeof parsed === "object" && (parsed.connections || parsed.ssrsUrl)) {
-          onImportSettings(parsed);
+          const updates: Partial<AppSettings> = {};
+          if (Array.isArray(parsed.connections)) updates.connections = parsed.connections;
+          if (typeof parsed.ssrsUrl === "string") updates.ssrsUrl = parsed.ssrsUrl;
+          if (typeof parsed.ssrsUsername === "string") updates.ssrsUsername = parsed.ssrsUsername;
+          if (typeof parsed.ssrsPassword === "string") updates.ssrsPassword = parsed.ssrsPassword;
+          if (typeof parsed.defaultSafeRun === "boolean") updates.defaultSafeRun = parsed.defaultSafeRun;
+          onUpdateSettings(updates);
         } else {
           alert("Invalid settings file format.");
         }

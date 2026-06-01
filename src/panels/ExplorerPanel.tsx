@@ -149,6 +149,8 @@ function FileTreeView({
   renamingPath,
   onRenameComplete,
   onContextMenu,
+  expandedPaths,
+  onToggleExpand,
 }: {
   node: FileTreeNode;
   depth?: number;
@@ -159,8 +161,11 @@ function FileTreeView({
   renamingPath: string | null;
   onRenameComplete: (newName: string) => void;
   onContextMenu: (e: React.MouseEvent, node: FileTreeNode) => void;
+  expandedPaths: Record<string, boolean>;
+  onToggleExpand: (path: string, defaultExpanded: boolean) => void;
 }) {
-  const [expanded, setExpanded] = useState(depth < 2);
+  const defaultExpanded = depth < 2;
+  const expanded = node.path in expandedPaths ? expandedPaths[node.path] : defaultExpanded;
   const [isDragOver, setIsDragOver] = useState(false);
   const isActive = !node.isFolder && node.path === activeFilePath;
   const isRenaming = renamingPath === node.path;
@@ -227,7 +232,7 @@ function FileTreeView({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={() => node.isFolder ? setExpanded(e => !e) : onOpenFile(node.path, node.name)}
+        onClick={() => node.isFolder ? onToggleExpand(node.path, defaultExpanded) : onOpenFile(node.path, node.name)}
         onContextMenu={(e) => onContextMenu(e, node)}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, overflow: "hidden" }}>
@@ -266,6 +271,8 @@ function FileTreeView({
           renamingPath={renamingPath}
           onRenameComplete={onRenameComplete}
           onContextMenu={onContextMenu}
+          expandedPaths={expandedPaths}
+          onToggleExpand={onToggleExpand}
         />
       ))}
     </div>
@@ -325,16 +332,33 @@ export function ExplorerPanel({
   const [folderFiles, setFolderFiles] = useState<Record<string, string[]>>({});
   const [search, setSearch] = useState("");
   const [showHidden, setShowHidden] = useState(false);
-  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("explorer-collapsed-folders") ?? "[]")); }
+    catch { return new Set(); }
+  });
+  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("explorer-expanded-paths") ?? "{}"); }
+    catch { return {}; }
+  });
 
   const toggleFolder = (path: string) => {
     setCollapsedFolders(prev => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
+      localStorage.setItem("explorer-collapsed-folders", JSON.stringify([...next]));
       return next;
     });
   };
+
+  const handleToggleExpand = useCallback((path: string, defaultExpanded: boolean) => {
+    setExpandedPaths(prev => {
+      const current = path in prev ? prev[path] : defaultExpanded;
+      const next = { ...prev, [path]: !current };
+      localStorage.setItem("explorer-expanded-paths", JSON.stringify(next));
+      return next;
+    });
+  }, []);
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [creatingFolderParent, setCreatingFolderParent] = useState<string | null>(null);
@@ -742,6 +766,8 @@ export function ExplorerPanel({
                       onMove={handleMove}
                       renamingPath={renamingPath}
                       onRenameComplete={handleRenameComplete}
+                      expandedPaths={expandedPaths}
+                      onToggleExpand={handleToggleExpand}
                       onContextMenu={(ev, n) => {
                         ev.preventDefault();
                         ev.stopPropagation();
