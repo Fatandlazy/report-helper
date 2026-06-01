@@ -860,7 +860,7 @@ function DatasetCard({ dataset, isEditMode, rdlPath, onRefresh, onUpdateTabMetad
 
 /* ─── SQL Tester ────────────────────────────────────────────────────────── */
 
-interface ParamValue { name: string; prompt: string; dataType: string; value: string | null; nullable?: boolean; hidden?: boolean; }
+interface ParamValue { name: string; prompt: string; dataType: string; value: string | null; nullable?: boolean; hidden?: boolean; availableValues?: AvailableValues; }
 
 function SqlTesterView({ 
   metadata, connections, activeConnectionId, onStatus, 
@@ -1050,7 +1050,8 @@ function SqlTesterView({
       dataType: p.dataType, 
       value: p.defaultValue ?? (p.nullable ? null : ""),
       nullable: p.nullable,
-      hidden: p.hidden
+      hidden: p.hidden,
+      availableValues: p.availableValues,
     })));
     setResult(null);
     setError(null);
