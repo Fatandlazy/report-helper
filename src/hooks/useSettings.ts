@@ -93,6 +93,10 @@ export function useSettings() {
         : [...(prev.hiddenLocalPaths || []), path],
     }));
   }
+  function importSettings(newSettings: AppSettings) {
+    setSettings(newSettings);
+  }
+
   function addToHistory(item: SqlHistoryItem) {
     setSettings(prev => {
       const history = [item, ...(prev.sqlHistory || [])].slice(0, 100);
@@ -111,6 +115,7 @@ export function useSettings() {
     setSection,
     toggleHiddenSsrsPath,
     toggleHiddenLocalPath,
+    importSettings,
     addToHistory,
   };
 }
