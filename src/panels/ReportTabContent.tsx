@@ -221,6 +221,7 @@ export function ReportTabContent({
                 rdlPath={tab.path}
                 onRefresh={refreshMetadata}
                 onUpdateTabMetadata={onUpdateTabMetadata}
+                isActive={tab.activeView === "sqltester"}
               />
             </div>
             <div style={{ display: tab.activeView === "preview" ? "contents" : "none" }}>
@@ -866,7 +867,7 @@ interface ParamValue { name: string; prompt: string; dataType: string; value: st
 function SqlTesterView({ 
   metadata, connections, activeConnectionId, onStatus, 
   selectedDataSetName, onSelectedDataSetNameChange, defaultSafeRun,
-  isEditMode, rdlPath, onRefresh, onUpdateTabMetadata
+  isEditMode, rdlPath, onRefresh, onUpdateTabMetadata, isActive
 }: {
   metadata: ReportMetadata;
   connections: DbConnection[];
@@ -879,6 +880,7 @@ function SqlTesterView({
   rdlPath: string;
   onRefresh: () => void;
   onUpdateTabMetadata: (path: string, metadata: Partial<ReportTab>) => void;
+  isActive?: boolean;
 }) {
   const datasets = metadata.dataSets.filter((d: DataSetInfo) => d.commandText?.trim());
   const [selectedDs, setSelectedDs] = useState<DataSetInfo | null>(() => {
@@ -1273,7 +1275,7 @@ function SqlTesterView({
       {/* Toolbar Left Portal - Empty for SqlTesterView as we moved them to sidebar */}
 
       {/* Toolbar Right Portal - Run button */}
-      {createPortal(
+      {isActive && createPortal(
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {isEditMode && sqlMode === "raw" && (
             <button

@@ -1,6 +1,6 @@
 [package]
 name = "reporting-tools-tauri"
-version = "0.1.7"
+version = "0.1.8"
 description = "Report Helper"
 authors = ["you"]
 edition = "2021"
