@@ -13,7 +13,7 @@ import { TabBar } from "./components/TabBar";
 import { ExplorerPanel } from "./panels/ExplorerPanel";
 import { ServerPanel } from "./panels/ServerPanel";
 import { SqlEditorPanel } from "./panels/SqlEditorPanel";
-import { ReportTabContent } from "./panels/ReportTabContent";
+import { ReportTabContent } from "./panels/report/ReportTabContent";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { SearchPanel } from "./panels/SearchPanel";
 
