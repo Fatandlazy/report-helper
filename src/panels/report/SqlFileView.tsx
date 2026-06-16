@@ -7,7 +7,7 @@ import { useHotkeys } from "../../hooks/useHotkeys";
 import { useEditorResize } from "../../hooks/useEditorResize";
 import { useConnectionDatabases } from "../../hooks/useConnectionDatabases";
 import { useSqlRunner } from "../../hooks/useSqlRunner";
-import { ResultTable } from "../../components/ResultTable";
+import { MultiResultTable } from "../../components/MultiResultTable";
 
 export function SqlFileView({ tab, connections, activeConnectionId, onStatus, defaultSafeRun, onUpdateTabMetadata, toolbarLeftEl, toolbarRightEl }: {
   tab: ReportTab;
@@ -26,7 +26,7 @@ export function SqlFileView({ tab, connections, activeConnectionId, onStatus, de
   const editorRef = useRef<any>(null);
 
   const { databases, selectedDb, setSelectedDb } = useConnectionDatabases(connections, connId);
-  const { result, running, error, run } = useSqlRunner();
+  const { results, running, error, run } = useSqlRunner();
   const { height: editorHeight, isResizing, startResizing } = useEditorResize(300);
 
   useEffect(() => {
@@ -57,7 +57,10 @@ export function SqlFileView({ tab, connections, activeConnectionId, onStatus, de
       safeRun: defaultSafeRun,
     });
     if (outcome) {
-      onStatus(conn.name, `${outcome.result.rowCount} rows · ${outcome.result.elapsedMs}ms${outcome.isSafeApplied ? " (Safe)" : ""}`);
+      const totalRows = outcome.results.reduce((acc, r) => acc + r.rowCount, 0);
+      const totalMs = outcome.results.reduce((acc, r) => acc + r.elapsedMs, 0);
+      const batchesText = outcome.results.length > 1 ? `${outcome.results.length} batches · ` : '';
+      onStatus(conn.name, `${batchesText}${totalRows} rows · ${totalMs}ms${outcome.isSafeApplied ? " (Safe)" : ""}`);
     } else {
       onStatus("", "Error");
     }
@@ -166,12 +169,12 @@ export function SqlFileView({ tab, connections, activeConnectionId, onStatus, de
         {error && (
           <div style={{ padding: 15, color: "#c00", fontSize: 13, whiteSpace: "pre-wrap", fontFamily: "monospace" }}>{error}</div>
         )}
-        {!error && !result && !running && (
-          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#aaa", fontSize: 13 }}>
-            Press F5 to run query
-          </div>
-        )}
-        {!error && result && <ResultTable result={result} />}
+        {!error && !results && !running && (
+            <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#aaa", fontSize: 13 }}>
+              Press F5 to run query
+            </div>
+          )}
+          {!error && results && <MultiResultTable results={results} />}
         {running && (
           <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span className="codicon codicon-loading codicon-modifier-spin" style={{ fontSize: 24, color: "#aaa" }} />

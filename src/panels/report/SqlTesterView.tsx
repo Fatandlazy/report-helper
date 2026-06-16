@@ -7,7 +7,7 @@ import { useHotkeys } from "../../hooks/useHotkeys";
 import { useEditorResize } from "../../hooks/useEditorResize";
 import { useConnectionDatabases } from "../../hooks/useConnectionDatabases";
 import { useSqlRunner } from "../../hooks/useSqlRunner";
-import { ResultTable } from "../../components/ResultTable";
+import { MultiResultTable } from "../../components/MultiResultTable";
 import { ParameterInput } from "./components/ParameterInput";
 
 interface ParamValue {
@@ -66,7 +66,7 @@ export function SqlTesterView({
   const editorRef = useRef<any>(null);
 
   const { databases, selectedDb, setSelectedDb } = useConnectionDatabases(connections, connId);
-  const { result, running, error, run } = useSqlRunner();
+  const { results, running, error, run } = useSqlRunner();
   const { height: editorHeight, isResizing, startResizing } = useEditorResize(160);
 
   useEffect(() => {
@@ -156,7 +156,10 @@ export function SqlTesterView({
       safeRun: defaultSafeRun,
     });
     if (outcome) {
-      onStatus(conn.name, `${outcome.result.rowCount} rows · ${outcome.result.elapsedMs}ms${outcome.isSafeApplied ? " (Safe)" : ""}`);
+      const totalRows = outcome.results.reduce((acc, r) => acc + r.rowCount, 0);
+      const totalMs = outcome.results.reduce((acc, r) => acc + r.elapsedMs, 0);
+      const batchesText = outcome.results.length > 1 ? `${outcome.results.length} batches · ` : '';
+      onStatus(conn.name, `${batchesText}${totalRows} rows · ${totalMs}ms${outcome.isSafeApplied ? " (Safe)" : ""}`);
     } else {
       onStatus("", "Error");
     }
@@ -389,12 +392,12 @@ export function SqlTesterView({
         )}
 
         <div style={{ flex: 1, overflow: "auto" }}>
-          {!result && !error && (
+          {!results && !error && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
               <span style={{ fontSize: 13, color: "#bbb" }}>Select a dataset and click Run</span>
             </div>
           )}
-          {result && <ResultTable result={result} />}
+          {results && <MultiResultTable results={results} />}
         </div>
       </div>
     </div>

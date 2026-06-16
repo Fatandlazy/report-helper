@@ -8,7 +8,7 @@ import { useHotkeys } from "../hooks/useHotkeys";
 import { useEditorResize } from "../hooks/useEditorResize";
 import { useConnectionDatabases } from "../hooks/useConnectionDatabases";
 import { useSqlRunner } from "../hooks/useSqlRunner";
-import { ResultTable } from "../components/ResultTable";
+import { MultiResultTable } from "../components/MultiResultTable";
 import { SQL_SNIPPETS } from "../data/snippets";
 
 interface Props {
@@ -46,7 +46,7 @@ export function SqlEditorPanel({
   const schemaRef = useRef<{ tables: string[]; columns: string[] }>({ tables: [], columns: [] });
 
   const { databases, selectedDb, setSelectedDb } = useConnectionDatabases(connections, connId);
-  const { result, running, error, run } = useSqlRunner();
+  const { results, running, error, run } = useSqlRunner();
   const { height: editorHeight, isResizing, startResizing } = useEditorResize(300);
 
   const toggleFolder = (path: string) => {
@@ -149,7 +149,10 @@ export function SqlEditorPanel({
     });
 
     if (outcome) {
-      onStatus(conn.name, `${outcome.result.rowCount} rows · ${outcome.result.elapsedMs}ms${outcome.isSafeApplied ? " (Safe)" : ""}`);
+      const totalRows = outcome.results.reduce((acc, r) => acc + r.rowCount, 0);
+      const totalMs = outcome.results.reduce((acc, r) => acc + r.elapsedMs, 0);
+      const batchesText = outcome.results.length > 1 ? `${outcome.results.length} batches · ` : '';
+      onStatus(conn.name, `${batchesText}${totalRows} rows · ${totalMs}ms${outcome.isSafeApplied ? " (Safe)" : ""}`);
       addToHistory({ sql: sqlToRun.trim(), timestamp: Date.now(), connectionName: conn.name });
     } else {
       onStatus("", "Error");
@@ -455,12 +458,12 @@ export function SqlEditorPanel({
         )}
 
         <div style={{ flex: 1, overflow: "auto" }}>
-          {!result && !error && (
+          {!results && !error && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#bbb", fontSize: 13 }}>
               Results will appear here
             </div>
           )}
-          {result && <ResultTable result={result} />}
+          {results && <MultiResultTable results={results} />}
         </div>
       </div>
     </div>
