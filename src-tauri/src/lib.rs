@@ -323,6 +323,218 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ModelInfo {
+    pub id: String,
+    pub display_name: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ModelsApiResponse {
+    data: Vec<ModelApiEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct ModelApiEntry {
+    id: String,
+    display_name: String,
+}
+
+#[tauri::command]
+async fn list_anthropic_models(api_key: String) -> Result<Vec<ModelInfo>, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://api.anthropic.com/v1/models")
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("API error {status}: {body}"));
+    }
+
+    let parsed: ModelsApiResponse = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(parsed.data.into_iter().map(|m| ModelInfo { id: m.id, display_name: m.display_name }).collect())
+}
+
+#[derive(serde::Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(serde::Serialize)]
+struct AnthropicMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(serde::Serialize)]
+struct AnthropicRequest {
+    model: String,
+    messages: Vec<AnthropicMessage>,
+    max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct AnthropicResponseContent {
+    text: String,
+}
+
+#[derive(serde::Deserialize)]
+struct AnthropicResponse {
+    content: Vec<AnthropicResponseContent>,
+}
+
+#[tauri::command]
+async fn save_temp_image(data_url: String) -> Result<String, String> {
+    use base64::Engine;
+
+    let comma = data_url.find(',').ok_or("Invalid data URL: no comma")?;
+    let header = &data_url[..comma];
+    let b64 = &data_url[comma + 1..];
+
+    let ext = if header.contains("image/png") { "png" }
+        else if header.contains("image/jpeg") || header.contains("image/jpg") { "jpg" }
+        else if header.contains("image/gif") { "gif" }
+        else if header.contains("image/webp") { "webp" }
+        else { "png" };
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("Base64 decode failed: {e}"))?;
+
+    let file_name = format!("claude-img-{}.{}", uuid::Uuid::new_v4(), ext);
+    let file_path = std::env::temp_dir().join(&file_name);
+
+    std::fs::write(&file_path, bytes)
+        .map_err(|e| format!("Failed to write temp image: {e}"))?;
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn call_claude_api(
+    _api_key: String,
+    _model: String,
+    messages: Vec<ChatMessage>,
+    system: Option<String>,
+    permission_mode: String,
+    effort_level: String,
+    cwd: Option<String>,
+    extra_dirs: Option<Vec<String>>,
+    skip_permissions: Option<bool>,
+) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+
+    // Format the conversation history
+    let mut prompt = String::new();
+    for msg in &messages {
+        let role_label = if msg.role == "user" { "User" } else { "Assistant" };
+        prompt.push_str(&format!("[{}]: {}\n", role_label, msg.content));
+    }
+    prompt.push_str("\nPlease respond to the last User message above.");
+
+    // Execute local `claude -p` CLI command.
+    // On Windows, we run `claude.cmd` directly; on other platforms, we run `claude`.
+    // We pass the prompt via stdin to avoid command line length limits and newline splitting/truncation issues with cmd /C on Windows.
+    #[cfg(target_os = "windows")]
+    let mut cmd = Command::new("claude.cmd");
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = Command::new("claude");
+
+    cmd.arg("-p");
+
+    if let Some(ref dir) = cwd {
+        if !dir.is_empty() {
+            cmd.current_dir(dir);
+        }
+    }
+
+    if skip_permissions.unwrap_or(false) {
+        cmd.arg("--dangerously-skip-permissions");
+    }
+
+    // Add temp dir so Claude can read saved images
+    cmd.arg("--add-dir").arg(std::env::temp_dir());
+
+    if let Some(dirs) = extra_dirs {
+        for dir in dirs {
+            if !dir.is_empty() {
+                cmd.arg("--add-dir").arg(&dir);
+            }
+        }
+    }
+
+    if !permission_mode.is_empty() {
+        cmd.arg("--permission-mode");
+        cmd.arg(&permission_mode);
+    }
+
+    if !effort_level.is_empty() {
+        cmd.arg("--effort");
+        cmd.arg(&effort_level);
+    }
+
+    if let Some(sys) = system {
+        cmd.arg("--system-prompt");
+        cmd.arg(sys);
+    }
+
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let output = tokio::task::spawn_blocking(move || -> Result<std::process::Output, String> {
+        use std::io::Write;
+        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn Claude CLI: {e}"))?;
+        
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(prompt.as_bytes()).map_err(|e| format!("Failed to write to stdin: {e}"))?;
+        }
+        
+        child.wait_with_output().map_err(|e| format!("Failed to wait for output: {e}"))
+    })
+    .await
+    .map_err(|e| format!("Task join failed: {e}"))??;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        return Err(format!("Claude CLI exited with error: {}\n{}", stdout, stderr));
+    }
+
+    // Clean up warning messages from stdout if any
+    let clean_response = stdout
+        .replace("Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.", "")
+        .trim()
+        .to_string();
+
+    Ok(clean_response)
+}
+
+#[tauri::command]
+fn snapshot_files(paths: Vec<String>) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    for path in paths {
+        // Skip files larger than 1500 KB to avoid memory/storage issues
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.len() > 1_536_000 { continue; }
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            result.insert(path, content);
+        }
+    }
+    result
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -356,6 +568,10 @@ pub fn run() {
             add_rdl_dataset,
             search_in_files,
             read_text_file,
+            snapshot_files,
+            call_claude_api,
+            save_temp_image,
+            list_anthropic_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

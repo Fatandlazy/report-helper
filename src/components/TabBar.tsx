@@ -68,11 +68,19 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onCloseOthers, onClo
             onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
           >
             <span
-              className={tab.title.toLowerCase().endsWith(".sql") ? "codicon codicon-database" : "codicon codicon-file-code"}
+              className={
+                tab.source === "chat"
+                  ? "codicon codicon-zap"
+                  : tab.title.toLowerCase().endsWith(".sql")
+                  ? "codicon codicon-database"
+                  : "codicon codicon-file-code"
+              }
               style={{ 
                 fontSize: 13, 
                 flexShrink: 0, 
-                color: tab.title.toLowerCase().endsWith(".sql") 
+                color: tab.source === "chat"
+                  ? "#e0573e"
+                  : tab.title.toLowerCase().endsWith(".sql") 
                   ? (isActive ? "#e38100" : "#aaa")
                   : (tab.source === "server" ? "#0078d4" : (isActive ? "#519aba" : "#aaa")) 
               }}

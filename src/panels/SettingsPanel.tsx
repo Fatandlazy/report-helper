@@ -15,7 +15,7 @@ export function SettingsPanel({
   settings, onUpdateSettings,
   onAddConnection, onRemoveConnection 
 }: Props) {
-  const { ssrsUrl, ssrsUsername, ssrsPassword, connections } = settings;
+  const { ssrsUrl, ssrsUsername, ssrsPassword, connections, claudeApiKey, claudeModel, claudeFolder } = settings;
   const [version, setVersion] = useState<string>("");
 
   useEffect(() => {
@@ -69,7 +69,7 @@ export function SettingsPanel({
     }
   };
   return (
-    <div className="flex-1 overflow-auto p-8" style={{ background: "#fff" }}>
+    <div style={{ flex: 1, overflowY: "auto", padding: "32px", background: "#fff" }}>
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
         <h1 style={{ fontSize: 24, fontWeight: 300, marginBottom: 24, color: "#333" }}>Settings</h1>
 
@@ -108,6 +108,78 @@ export function SettingsPanel({
                   style={{ width: "100%", padding: "6px 10px", border: "1px solid #ddd", borderRadius: 4 }}
                 />
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Claude AI Section */}
+        <section style={{ marginBottom: 40 }}>
+          <h2 style={{ fontSize: 13, fontWeight: 600, color: "#007acc", textTransform: "uppercase", marginBottom: 16, borderBottom: "1px solid #eee", paddingBottom: 8 }}>
+            Claude AI Settings
+          </h2>
+          <div style={{ display: "grid", gap: 16 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#666", marginBottom: 4 }}>Anthropic API Key</label>
+              <input 
+                type="password" 
+                value={claudeApiKey || ""} 
+                onChange={e => onUpdateSettings({ claudeApiKey: e.target.value })}
+                placeholder="sk-ant-... (Để trống nếu dùng acc Pro trên Claude Code CLI)"
+                style={{ width: "100%", padding: "6px 10px", border: "1px solid #ddd", borderRadius: 4 }}
+              />
+              <span style={{ fontSize: 11, color: "#888", marginTop: 4, display: "block" }}>
+                Nếu bạn đã chạy lệnh đăng nhập tài khoản Pro qua Claude Code CLI (`claude auth`), bạn không cần nhập key ở đây.
+              </span>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#666", marginBottom: 4 }}>Model Name</label>
+              <input 
+                type="text" 
+                value={claudeModel || "claude-sonnet-4-5"} 
+                onChange={e => onUpdateSettings({ claudeModel: e.target.value })}
+                placeholder="claude-sonnet-4-5"
+                style={{ width: "100%", padding: "6px 10px", border: "1px solid #ddd", borderRadius: 4 }}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#666", marginBottom: 4 }}>Claude Code Working Directory</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input 
+                  type="text" 
+                  readOnly
+                  value={claudeFolder || "Chưa chọn thư mục làm việc"} 
+                  placeholder="Thư mục làm việc độc lập của Claude Code"
+                  style={{ flex: 1, padding: "6px 10px", border: "1px solid #ddd", borderRadius: 4, background: "#f5f5f5", color: claudeFolder ? "#333" : "#999" }}
+                />
+                <button 
+                  onClick={async () => {
+                    try {
+                      const dir = await open({ directory: true, multiple: false });
+                      if (typeof dir !== "string") return;
+                      onUpdateSettings({ claudeFolder: dir });
+                    } catch (e) {
+                      console.error("Failed to select folder", e);
+                    }
+                  }}
+                  className="btn-secondary"
+                  style={{ display: "flex", alignItems: "center", gap: 4 }}
+                >
+                  <span className="codicon codicon-folder-opened" /> {claudeFolder ? "Thay đổi" : "Chọn thư mục"}
+                </button>
+                {claudeFolder && (
+                  <button 
+                    onClick={() => onUpdateSettings({ claudeFolder: "" })}
+                    className="btn-secondary"
+                    style={{ color: "#e81123", display: "flex", alignItems: "center", justifyContent: "center", padding: "6px 10px" }}
+                    title="Xóa thư mục làm việc"
+                  >
+                    <span className="codicon codicon-trash" />
+                  </button>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: "#888", marginTop: 4, display: "block" }}>
+                Thư mục này hoạt động độc lập và không liên quan đến danh sách thư mục dự án trong cột Explorer.
+              </span>
             </div>
           </div>
         </section>
@@ -221,6 +293,7 @@ export function SettingsPanel({
             <ShortcutItem keys="Ctrl + Alt + 1/E" description="Switch to Explorer" />
             <ShortcutItem keys="Ctrl + Alt + 2/S" description="Switch to Server" />
             <ShortcutItem keys="Ctrl + Alt + 3/Q" description="Switch to SQL Editor" />
+            <ShortcutItem keys="Ctrl + Alt + 4" description="Switch to Claude Chat" />
             <ShortcutItem keys="Ctrl + Enter / F5" description="Run SQL Query" />
             <ShortcutItem keys="Ctrl + S" description="Save SQL File" />
             <ShortcutItem keys="Ctrl + N" description="New SQL File" />

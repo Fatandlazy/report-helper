@@ -1,0 +1,3 @@
+{
+  "customInstructions": "Dự án này là 'report-helper' - một ứng dụng Desktop (Reporting tool) được xây dựng bằng Tauri v2, React 19, Vite, Tailwind CSS v4 và TypeScript.\n\nHướng dẫn dành cho Claude:\n1. Quản lý package: Sử dụng `npm`.\n2. Lệnh chính:\n   - Khởi chạy dev: `npm run tauri dev` (chạy cả Vite và Tauri backend).\n   - Build app: `npm run tauri build`.\n   - Chỉ dev frontend: `npm run dev`.\n3. Stack backend (Tauri): Sử dụng Rust. Khi chỉnh sửa file backend, hãy làm việc trong thư mục `src-tauri/`.\n4. Stack frontend: React 19 với hooks, Tailwind CSS v4 (cấu hình trong index.css/vite.config.ts thay vì tailwind.config.js theo chuẩn v4).\n5. Khi code UI, ưu tiên giao diện hiện đại, tối màu (dark mode), chuyên nghiệp cho tool báo cáo."
+}

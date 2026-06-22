@@ -12,6 +12,7 @@ const items: ActivityItem[] = [
   { id: "search",    icon: "codicon-search",            title: "Search" },
   { id: "server",    icon: "codicon-cloud",              title: "Server" },
   { id: "sqleditor", icon: "codicon-terminal-powershell", title: "SQL Editor" },
+  { id: "chat",      icon: "codicon-comment-discussion", title: "Chat with Claude" },
 ];
 
 interface Props {

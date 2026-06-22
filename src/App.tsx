@@ -16,6 +16,8 @@ import { SqlEditorPanel } from "./panels/SqlEditorPanel";
 import { ReportTabContent } from "./panels/report/ReportTabContent";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { SearchPanel } from "./panels/SearchPanel";
+import { ChatPanel } from "./panels/ChatPanel";
+import { ClaudeSessionsPanel } from "./panels/ClaudeSessionsPanel";
 
 export default function App() {
   const {
@@ -39,6 +41,7 @@ export default function App() {
     "ctrl+alt+1": () => setSection("explorer"),
     "ctrl+alt+2": () => setSection("server"),
     "ctrl+alt+3": () => setSection("sqleditor"),
+    "ctrl+alt+4": () => setSection("chat"),
     "ctrl+shift+f": () => {
       setSection("search");
       setSidebarVisible(true);
@@ -102,6 +105,39 @@ export default function App() {
   function handleOpenFile(path: string, name: string) {
     openTab(path, name, "local");
   }
+
+  function handleOpenChatSession(id: string, title: string) {
+    openTab(id, title, "chat");
+  }
+
+  useEffect(() => {
+    const handleSessionDeleted = (e: Event) => {
+      const { id } = (e as CustomEvent<{ id: string }>).detail;
+      closeTabsByPath(id);
+    };
+    window.addEventListener("claude-session-deleted", handleSessionDeleted);
+    return () => window.removeEventListener("claude-session-deleted", handleSessionDeleted);
+  }, [closeTabsByPath]);
+
+  useEffect(() => {
+    const handleSessionsUpdate = () => {
+      try {
+        const raw = localStorage.getItem("claude_sessions_v1");
+        if (raw) {
+          const sessions = JSON.parse(raw);
+          if (Array.isArray(sessions)) {
+            sessions.forEach((s: any) => {
+              updateTabsByPath(s.id, { title: s.title });
+            });
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    window.addEventListener("claude-sessions-updated", handleSessionsUpdate);
+    return () => window.removeEventListener("claude-sessions-updated", handleSessionsUpdate);
+  }, [updateTabsByPath]);
 
   // Server: "SQL Test" downloads RDL → open as local tab
   // Server: "Preview" → open as server tab (webview)
@@ -223,6 +259,14 @@ export default function App() {
                 onStatus={onStatus}
               />
             )}
+            {section === "chat" && (
+              <ClaudeSessionsPanel
+                onOpenSession={handleOpenChatSession}
+                activeSessionId={activeTab?.source === "chat" ? activeTab.path : null}
+                claudeFolder={settings.claudeFolder}
+                onUpdateClaudeFolder={(path) => updateSettings({ claudeFolder: path })}
+              />
+            )}
           </div>
         )}
 
@@ -256,7 +300,7 @@ export default function App() {
           </div>
 
           {/* Reports Panel (Explorer/Search/Server Tabs) */}
-          <div className="flex flex-col flex-1 overflow-hidden" style={{ display: (section === "explorer" || section === "search" || section === "server") ? "flex" : "none" }}>
+          <div className="flex flex-col flex-1 overflow-hidden" style={{ display: (section === "explorer" || section === "search" || section === "server" || section === "chat") ? "flex" : "none" }}>
             <TabBar
               tabs={tabs}
               activeId={activeId}
@@ -272,19 +316,27 @@ export default function App() {
               ) : (
                 tabs.map(tab => (
                   <div key={tab.id} style={{ display: tab.id === activeId ? "flex" : "none", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-                    <ReportTabContent
-                      tab={tab}
-                      connections={settings.connections}
-                      activeConnectionId={settings.activeConnectionId}
-                      ssrsUrl={settings.ssrsUrl}
-                      ssrsUsername={settings.ssrsUsername}
-                      ssrsPassword={settings.ssrsPassword}
-                      onViewChange={handleTabViewChange}
-                      onStatus={onStatus}
-                      defaultSafeRun={settings.defaultSafeRun}
-                      onUpdateTabMetadata={updateTabsByPath}
-                      reloadKey={reloadKeys[tab.id] ?? 0}
-                    />
+                    {tab.source === "chat" ? (
+                      <ChatPanel
+                        tab={tab}
+                        settings={settings}
+                        onStatus={onStatus}
+                      />
+                    ) : (
+                      <ReportTabContent
+                        tab={tab}
+                        connections={settings.connections}
+                        activeConnectionId={settings.activeConnectionId}
+                        ssrsUrl={settings.ssrsUrl}
+                        ssrsUsername={settings.ssrsUsername}
+                        ssrsPassword={settings.ssrsPassword}
+                        onViewChange={handleTabViewChange}
+                        onStatus={onStatus}
+                        defaultSafeRun={settings.defaultSafeRun}
+                        onUpdateTabMetadata={updateTabsByPath}
+                        reloadKey={reloadKeys[tab.id] ?? 0}
+                      />
+                    )}
                   </div>
                 ))
               )}
@@ -299,13 +351,31 @@ export default function App() {
 }
 
 function WelcomeScreen({ section }: { section: string }) {
+  const getMessage = () => {
+    switch (section) {
+      case "explorer":
+        return "Open a folder in the Explorer or click a file to get started";
+      case "chat":
+        return "Create or select a chat session from the sidebar to start coding with Claude Code";
+      default:
+        return "Select a report from the Server panel";
+    }
+  };
+
+  const getIcon = () => {
+    switch (section) {
+      case "chat":
+        return "codicon-comment-discussion";
+      default:
+        return "codicon-file-code";
+    }
+  };
+
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4" style={{ background: "#fff" }}>
-      <span className="codicon codicon-file-code" style={{ fontSize: 56, color: "#ddd" }} />
-      <div className="text-gray-400 text-sm text-center">
-        {section === "explorer"
-          ? "Open a folder in the Explorer or click a file to get started"
-          : "Select a report from the Server panel"}
+      <span className={`codicon ${getIcon()}`} style={{ fontSize: 56, color: "#ddd" }} />
+      <div className="text-gray-400 text-sm text-center max-w-[280px] px-4">
+        {getMessage()}
       </div>
     </div>
   );
