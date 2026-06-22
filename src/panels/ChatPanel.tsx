@@ -115,6 +115,28 @@ function isValidTextFile(filePath: string): boolean {
   return VALID_TEXT_EXTENSIONS.has(lower.slice(dotIdx));
 }
 
+const EXT_BADGE: Record<string, { bg: string; color: string; label: string }> = {
+  sql:  { bg: "#e3f2fd", color: "#1565c0", label: "SQL" },
+  rdl:  { bg: "#fff3e0", color: "#e65100", label: "RDL" },
+  xml:  { bg: "#f3e5f5", color: "#6a1b9a", label: "XML" },
+  json: { bg: "#fffde7", color: "#f57f17", label: "JSON" },
+  ts:   { bg: "#e0f7fa", color: "#006064", label: "TS" },
+  tsx:  { bg: "#e0f7fa", color: "#006064", label: "TSX" },
+  js:   { bg: "#fff8e1", color: "#e65100", label: "JS" },
+  jsx:  { bg: "#fff8e1", color: "#e65100", label: "JSX" },
+  md:   { bg: "#f5f5f5", color: "#616161", label: "MD" },
+  cs:   { bg: "#e8f5e9", color: "#1b5e20", label: "C#" },
+  py:   { bg: "#e3f2fd", color: "#0d47a1", label: "PY" },
+  html: { bg: "#fce4ec", color: "#880e4f", label: "HTML" },
+  css:  { bg: "#e8eaf6", color: "#283593", label: "CSS" },
+  csv:  { bg: "#e8f5e9", color: "#2e7d32", label: "CSV" },
+};
+
+function getExtBadge(filePath: string) {
+  const ext = filePath.split(".").pop()?.toLowerCase() || "";
+  return EXT_BADGE[ext] ?? { bg: "#f5f5f5", color: "#757575", label: ext.toUpperCase().slice(0, 4) || "FILE" };
+}
+
 function EffortSlider({ value, onChange }: { value: EffortLevel; onChange: (v: EffortLevel) => void }) {
   const activeIdx = EFFORT_LEVELS.indexOf(value);
   return (
@@ -325,20 +347,27 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
     setAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Scan workspace files for @ suggestions
+  // Scan workspace files + claudeFolder for @ suggestions
   useEffect(() => {
     const loadFiles = async () => {
       const files: string[] = [];
-      for (const folder of settings.workspaceFolders) {
+      const seen = new Set<string>();
+      const foldersToScan: string[] = [
+        ...settings.workspaceFolders.map(f => f.path),
+        ...(settings.claudeFolder ? [settings.claudeFolder] : [])
+      ];
+      for (const folder of foldersToScan) {
+        if (!folder || seen.has(folder)) continue;
+        seen.add(folder);
         try {
-          const folderFiles = await invoke<string[]>("scan_folder", { path: folder.path });
+          const folderFiles = await invoke<string[]>("scan_folder", { path: folder });
           files.push(...folderFiles.filter(f => !f.endsWith("/")));
         } catch {}
       }
       workspaceFiles.current = files;
     };
     loadFiles();
-  }, [settings.workspaceFolders]);
+  }, [settings.workspaceFolders, settings.claudeFolder]);
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const imageItem = Array.from(e.clipboardData.items).find(i => i.type.startsWith("image/"));
@@ -361,19 +390,20 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
     setInput(val);
     const cursor = e.target.selectionStart ?? val.length;
     const before = val.slice(0, cursor);
-    const match = before.match(/@(\w*)$/);
+    // Match @ followed by optional query (allow letters, digits, _, -, ., spaces up to word boundary)
+    const match = before.match(/@([\w.\-]*)$/);
     if (match) {
       const q = match[1].toLowerCase();
       setAtQuery(match[1]);
       setAtSelectedIdx(0);
-      if (q.length > 0) {
-        const filtered = workspaceFiles.current
-          .filter(f => (f.split(/[\\/]/).pop()?.toLowerCase() || "").includes(q))
-          .slice(0, 8);
-        setAtSuggestions(filtered);
-      } else {
-        setAtSuggestions([]);
-      }
+      const filtered = workspaceFiles.current
+        .filter(f => {
+          if (!q) return true; // show all on bare @
+          // Search in full normalised path
+          return f.replace(/\\/g, "/").toLowerCase().includes(q);
+        })
+        .slice(0, 15);
+      setAtSuggestions(filtered);
     } else {
       setAtQuery(null);
       setAtSuggestions([]);
@@ -1063,29 +1093,105 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
       </div>
 
       {/* @ Suggestions Dropdown */}
-      {atQuery !== null && atQuery.length > 0 && (
+      {atQuery !== null && (
         <div
           ref={atDropdownRef}
-          style={{ position: "absolute", bottom: 80, left: 24, right: 24, maxWidth: 360, background: "#fff", border: "1px solid #d4d4d4", borderRadius: 8, boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)", padding: 4, zIndex: 200 }}
+          style={{
+            position: "absolute",
+            bottom: 88,
+            left: 16,
+            right: 16,
+            maxWidth: 480,
+            background: "#fff",
+            border: "1px solid #d4d4d4",
+            borderRadius: 10,
+            boxShadow: "0 12px 24px -4px rgba(0,0,0,0.12), 0 4px 8px -2px rgba(0,0,0,0.06)",
+            zIndex: 250,
+            overflow: "hidden"
+          }}
         >
-          {atSuggestions.length === 0 ? (
-            <div style={{ padding: "8px 12px", fontSize: 12, color: "#999" }}>No files found for "@{atQuery}"</div>
-          ) : atSuggestions.map((filePath, idx) => {
-            const name = filePath.split(/[\\/]/).pop() || filePath;
-            const dir = filePath.replace(/[\\/][^\\/]+$/, "").split(/[\\/]/).pop() || "";
-            return (
-              <button
-                key={filePath}
-                onClick={() => handleAtSelect(filePath)}
-                style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px", background: idx === atSelectedIdx ? "#f0f7ff" : "none", border: "none", borderRadius: 6, cursor: "pointer", textAlign: "left" }}
-                onMouseEnter={() => setAtSelectedIdx(idx)}
-              >
-                <span className="codicon codicon-file" style={{ fontSize: 13, color: "#007acc", flexShrink: 0 }} />
-                <span style={{ fontSize: 13, color: "#333", fontWeight: 500 }}>{name}</span>
-                {dir && <span style={{ fontSize: 11, color: "#999", marginLeft: "auto" }}>{dir}</span>}
-              </button>
-            );
-          })}
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", background: "#f8f8f8", borderBottom: "1px solid #efefef" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#888", fontWeight: 600 }}>
+              <span className="codicon codicon-file-code" style={{ fontSize: 12, color: "#007acc" }} />
+              ADD FILE TO CONTEXT
+              {atQuery && <span style={{ fontWeight: 400, color: "#bbb" }}>— "{atQuery}"</span>}
+            </div>
+            <span style={{ fontSize: 10, color: "#bbb" }}>
+              {atSuggestions.length > 0 ? `${atSuggestions.length} result${atSuggestions.length > 1 ? "s" : ""}` : ""}
+              {"  ↑↓ navigate  ↵ select  Esc close"}
+            </span>
+          </div>
+
+          {/* Results */}
+          <div style={{ maxHeight: 280, overflowY: "auto", padding: 4 }}>
+            {atSuggestions.length === 0 ? (
+              <div style={{ padding: "16px 12px", textAlign: "center", color: "#bbb", fontSize: 12 }}>
+                {atQuery
+                  ? <><span className="codicon codicon-search" style={{ display: "block", fontSize: 20, marginBottom: 6, opacity: 0.4 }} />No files match "{atQuery}"<br/><span style={{ fontSize: 11, color: "#d0d0d0" }}>Try a different keyword</span></>
+                  : <><span className="codicon codicon-folder-opened" style={{ display: "block", fontSize: 20, marginBottom: 6, opacity: 0.4 }} />No workspace files found<br/><span style={{ fontSize: 11, color: "#d0d0d0" }}>Add a workspace folder in Settings</span></>
+                }
+              </div>
+            ) : (
+              atSuggestions.map((filePath, idx) => {
+                const normalised = filePath.replace(/\\/g, "/");
+                const name = normalised.split("/").pop() || filePath;
+                const parentDir = normalised.split("/").slice(-2, -1)[0] || "";
+                const badge = getExtBadge(filePath);
+                const isSelected = idx === atSelectedIdx;
+                return (
+                  <button
+                    key={filePath}
+                    onClick={() => handleAtSelect(filePath)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 9,
+                      width: "100%",
+                      padding: "7px 10px",
+                      background: isSelected ? "#f0f7ff" : "transparent",
+                      border: "none",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "background 0.1s"
+                    }}
+                    onMouseEnter={() => setAtSelectedIdx(idx)}
+                  >
+                    {/* Extension badge */}
+                    <span style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minWidth: 32,
+                      height: 18,
+                      padding: "0 5px",
+                      borderRadius: 3,
+                      background: badge.bg,
+                      color: badge.color,
+                      fontSize: 9,
+                      fontWeight: 700,
+                      fontFamily: "monospace",
+                      flexShrink: 0,
+                      letterSpacing: "0.03em"
+                    }}>
+                      {badge.label}
+                    </span>
+                    {/* Filename */}
+                    <span style={{ fontSize: 13, color: "#222", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {name}
+                    </span>
+                    {/* Parent folder */}
+                    {parentDir && (
+                      <span style={{ fontSize: 11, color: "#bbb", marginLeft: "auto", flexShrink: 0, paddingLeft: 8 }}>
+                        {parentDir}/
+                      </span>
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
       )}
 

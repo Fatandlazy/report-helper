@@ -52,6 +52,8 @@ export interface AppSettings {
   claudeApiKey?: string;
   claudeModel?: string;
   claudeFolder?: string;
+  claudePermissionMode?: string;
+  claudeAllowedTools?: string;
 }
 
 export interface QueryParameter {
