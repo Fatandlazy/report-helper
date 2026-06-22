@@ -5,6 +5,8 @@ import { OverviewView } from "./OverviewView";
 import { SqlTesterView } from "./SqlTesterView";
 import { PreviewView } from "./PreviewView";
 import { SqlFileView } from "./SqlFileView";
+import { MarkdownView } from "./MarkdownView";
+import { XlsxView } from "./XlsxView";
 import { Centered } from "./components/Centered";
 
 interface Props {
@@ -42,14 +44,16 @@ export function ReportTabContent({
   const isServerTab = tab.source === "server";
   const ext = tab.path.split(".").pop()?.toLowerCase();
   const isSqlFile = ext === "sql";
+  const isMdFile = ext === "md";
+  const isXlsxFile = ext === "xlsx";
 
   useEffect(() => {
     if (isServerTab) return;
     setMetadata(null);
     setMetaError(null);
-    if (isSqlFile) { setLoading(false); return; }
+    if (isSqlFile || isMdFile || isXlsxFile) { setLoading(false); return; }
     if (ext !== "rdl" && ext !== "rdlc") {
-      setMetaError("Unsupported file type. Currently only .rdl, .rdlc, and .sql files are supported.");
+      setMetaError("Unsupported file type. Currently only .rdl, .rdlc, .sql, .md, and .xlsx files are supported.");
       return;
     }
     setLoading(true);
@@ -70,9 +74,10 @@ export function ReportTabContent({
     }
   }
 
+  const isSimpleViewer = isSqlFile || isMdFile || isXlsxFile;
   const visibleViews = isServerTab
     ? VIEWS.filter(v => v.id === "preview")
-    : isSqlFile ? [] : VIEWS;
+    : isSimpleViewer ? [] : VIEWS;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fff" }}>
@@ -106,7 +111,7 @@ export function ReportTabContent({
           <div ref={setToolbarLeftEl} style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 15 }} />
         </div>
         <div ref={setToolbarRightEl} style={{ display: "flex", alignItems: "center", gap: 10 }} />
-        {!isSqlFile && (
+        {!isSimpleViewer && (
           <div
             style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 10, paddingLeft: 10, borderLeft: "1px solid #e0e0e0", height: 20, opacity: isServerTab ? 0.5 : 1 }}
             title={isServerTab ? "Edit Mode is only available for local RDL files" : ""}
@@ -138,6 +143,12 @@ export function ReportTabContent({
         )}
         {!isServerTab && !loading && !metaError && isSqlFile && (
           <SqlFileView tab={tab} connections={connections} activeConnectionId={activeConnectionId} onStatus={onStatus} defaultSafeRun={defaultSafeRun} onUpdateTabMetadata={onUpdateTabMetadata} toolbarLeftEl={toolbarLeftEl} toolbarRightEl={toolbarRightEl} />
+        )}
+        {!isServerTab && !loading && !metaError && isMdFile && (
+          <MarkdownView tab={tab} />
+        )}
+        {!isServerTab && !loading && !metaError && isXlsxFile && (
+          <XlsxView tab={tab} />
         )}
         {!isServerTab && !loading && !metaError && metadata && !isSqlFile && (
           <>

@@ -521,6 +521,13 @@ async fn call_claude_api(
 }
 
 #[tauri::command]
+fn read_file_base64(path: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+#[tauri::command]
 fn snapshot_files(paths: Vec<String>) -> HashMap<String, String> {
     let mut result = HashMap::new();
     for path in paths {
@@ -569,6 +576,7 @@ pub fn run() {
             search_in_files,
             read_text_file,
             snapshot_files,
+            read_file_base64,
             call_claude_api,
             save_temp_image,
             list_anthropic_models,
