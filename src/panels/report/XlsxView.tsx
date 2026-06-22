@@ -5,7 +5,6 @@ import { transformExcelToFortune } from "@corbe30/fortune-excel";
 import type { Sheet } from "@fortune-sheet/core";
 import "@fortune-sheet/react/dist/index.css";
 import { ReportTab } from "../../types";
-import { Centered } from "./components/Centered";
 
 interface Props {
   tab: ReportTab;
@@ -26,7 +25,20 @@ export function XlsxView({ tab }: Props) {
   const [key, setKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const workbookRef = useRef<WorkbookInstance>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) setSize({ w: width, h: height });
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,33 +62,36 @@ export function XlsxView({ tab }: Props) {
     return () => { cancelled = true; };
   }, [tab.path]);
 
-  if (error) {
-    return (
-      <Centered>
-        <span className="codicon codicon-error" style={{ fontSize: 28, color: "#c00" }} />
-        <span style={{ fontSize: 13, color: "#c00", marginTop: 10, maxWidth: 400, textAlign: "center" }}>{error}</span>
-      </Centered>
-    );
-  }
-
   return (
-    <div style={{ position: "relative", height: "100%", width: "100%" }}>
+    <div ref={containerRef} style={{ position: "relative", height: "100%", width: "100%", overflow: "hidden" }}>
+      {size && (
+        <div style={{ width: size.w, height: size.h }}>
+          <Workbook
+            key={key}
+            ref={workbookRef}
+            data={sheets}
+            onChange={setSheets}
+            showToolbar={false}
+            showFormulaBar={false}
+            showSheetTabs={true}
+            allowEdit={false}
+          />
+        </div>
+      )}
+
       {loading && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.85)", zIndex: 10 }}>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#fff", zIndex: 10 }}>
           <span className="codicon codicon-loading codicon-modifier-spin" style={{ fontSize: 22, color: "#aaa" }} />
           <span style={{ fontSize: 13, color: "#aaa", marginTop: 10 }}>Loading spreadsheet…</span>
         </div>
       )}
-      <Workbook
-        key={key}
-        ref={workbookRef}
-        data={sheets}
-        onChange={setSheets}
-        showToolbar={false}
-        showFormulaBar={false}
-        showSheetTabs={true}
-        allowEdit={false}
-      />
+
+      {error && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#fff", zIndex: 10 }}>
+          <span className="codicon codicon-error" style={{ fontSize: 28, color: "#c00" }} />
+          <span style={{ fontSize: 13, color: "#c00", marginTop: 10, maxWidth: 400, textAlign: "center" }}>{error}</span>
+        </div>
+      )}
     </div>
   );
 }
