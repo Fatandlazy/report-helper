@@ -301,3 +301,9 @@ pre, code, .mono {
   letter-spacing: 0.05em;
   box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
+
+.selectable-text,
+.selectable-text * {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}

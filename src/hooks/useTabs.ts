@@ -13,7 +13,7 @@ export function useTabs() {
   const openTab = useCallback(async (
     path: string,
     title: string,
-    source: "local" | "server",
+    source: "local" | "server" | "chat",
     serverPath?: string,
     initialView: TabView = "overview",
   ) => {

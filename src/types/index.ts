@@ -1,11 +1,11 @@
-export type Section = "explorer" | "search" | "server" | "sqleditor" | "settings";
+export type Section = "explorer" | "search" | "server" | "sqleditor" | "settings" | "chat";
 export type TabView = "overview" | "sqltester" | "preview";
 
 export interface ReportTab {
   id: string;
   title: string;
   path: string;          // local fs path or temp path for server reports
-  source: "local" | "server";
+  source: "local" | "server" | "chat";
   serverPath?: string;   // original SSRS path for preview URL
   activeView: TabView;
   lastModified?: number; // timestamp of file on disk
@@ -49,6 +49,11 @@ export interface AppSettings {
   hiddenLocalPaths?: string[];
   defaultSafeRun: boolean;
   sqlHistory?: SqlHistoryItem[];
+  claudeApiKey?: string;
+  claudeModel?: string;
+  claudeFolder?: string;
+  claudePermissionMode?: string;
+  claudeAllowedTools?: string;
 }
 
 export interface QueryParameter {

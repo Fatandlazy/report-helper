@@ -1,8 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./monaco"; // configure Monaco to load locally (no CDN) before any editor mounts
 import App from "./App";
 
-document.addEventListener("contextmenu", (e) => e.preventDefault());
+if (!import.meta.env.DEV) {
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+}
 
 // Prevent browser from opening files on drop
 window.addEventListener("dragover", (e) => e.preventDefault());
