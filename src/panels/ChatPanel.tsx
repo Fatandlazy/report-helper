@@ -10,11 +10,19 @@ interface Props {
   onStatus: (left: string, right: string) => void;
 }
 
+interface ClaudeReply {
+  text: string;
+  thinking: string;
+}
+
 interface Message {
   role: "user" | "assistant" | "compact";
   content: string;        // display text
   cliContent?: string;    // actual content sent to Claude CLI (includes image paths)
   imagePreviews?: string[]; // base64 DataURLs for inline display
+  thinking?: string;      // extended-thinking content (when Thinking is enabled)
+  checkpointId?: string;
+  timestamp?: number;
 }
 
 interface Checkpoint {
@@ -25,7 +33,7 @@ interface Checkpoint {
   files: Record<string, string>; // filePath → fileContent snapshot at checkpoint time
 }
 
-type PermissionMode = "auto" | "plan" | "acceptEdits" | "default";
+type PermissionMode = "auto" | "plan" | "acceptEdits" | "default" | "bypassPermissions" | "dontAsk";
 type EffortLevel = "low" | "medium" | "high" | "max";
 
 interface Attachment {
@@ -44,6 +52,13 @@ interface ModeOption {
 
 const MODE_OPTIONS: ModeOption[] = [
   {
+    id: "auto",
+    title: "Auto mode",
+    description: "Claude will automatically choose the best permission mode for each task",
+    icon: "codicon-zap",
+    cliValue: "auto"
+  },
+  {
     id: "default",
     title: "Ask before edits",
     description: "Claude will ask for approval before making each edit",
@@ -58,18 +73,25 @@ const MODE_OPTIONS: ModeOption[] = [
     cliValue: "acceptEdits"
   },
   {
+    id: "bypassPermissions",
+    title: "Bypass Permissions",
+    description: "Skip most permission prompts",
+    icon: "codicon-check-all",
+    cliValue: "bypassPermissions"
+  },
+  {
+    id: "dontAsk",
+    title: "Don't Ask",
+    description: "Never ask — execute all tools without confirmation",
+    icon: "codicon-warning",
+    cliValue: "dontAsk"
+  },
+  {
     id: "plan",
     title: "Plan mode",
     description: "Claude will explore the code and present a plan before editing",
     icon: "codicon-layers",
     cliValue: "plan"
-  },
-  {
-    id: "auto",
-    title: "Auto mode",
-    description: "Claude will automatically choose the best permission mode for each task",
-    icon: "codicon-zap",
-    cliValue: "auto"
   }
 ];
 
@@ -196,16 +218,13 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [localModel, setLocalModel] = useState<string>("");
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
-  const [autoSwitchModel, setAutoSwitchModel] = useState(true);
   const [isCompacting, setIsCompacting] = useState(false);
   const [needsPermission, setNeedsPermission] = useState(false);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [showCheckpointPanel, setShowCheckpointPanel] = useState(false);
-  const [editingCheckpointId, setEditingCheckpointId] = useState<string | null>(null);
-  const [editingLabel, setEditingLabel] = useState("");
-  const [isSavingCheckpoint, setIsSavingCheckpoint] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [confirmRestoreId, setConfirmRestoreId] = useState<string | null>(null);
+  const [highlightedCkptId, setHighlightedCkptId] = useState<string | null>(null);
 
   const contextPct = Math.min(99, Math.round(
     (messages.filter(m => m.role !== "compact").reduce((s, m) => s + (m.cliContent ?? m.content).length, 0) / 4 + messages.length * 4) / 2000
@@ -222,35 +241,81 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
   const checkpointPanelRef = useRef<HTMLDivElement>(null);
   const checkpointBtnRef = useRef<HTMLButtonElement>(null);
   const workspaceFiles = useRef<string[]>([]);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const highlightTimerRef = useRef<number | null>(null);
 
-  // Load messages for this session
+  // Load messages for this session from disk (migrates any legacy localStorage copy once)
   useEffect(() => {
-    try {
-      const rawMsgs = localStorage.getItem(`claude_messages_${tab.path}`);
-      if (rawMsgs) {
-        setMessages(JSON.parse(rawMsgs));
-      } else {
-        setMessages([]);
-      }
-    } catch (e) {
-      console.error(e);
-      setMessages([]);
-    }
+    let cancelled = false;
+    const legacyKey = `claude_messages_${tab.path}`;
+    invoke<string>("load_messages", { sessionId: tab.path })
+      .then(raw => {
+        if (cancelled) return;
+        let loaded: Message[] = [];
+        try { loaded = JSON.parse(raw); } catch { loaded = []; }
+        // One-time migration: disk empty but an old localStorage copy exists → adopt and clear it.
+        if (loaded.length === 0) {
+          try {
+            const legacy = localStorage.getItem(legacyKey);
+            if (legacy) {
+              loaded = JSON.parse(legacy);
+              // Only drop the localStorage copy once the disk write succeeds, to avoid data loss.
+              invoke("save_messages", { sessionId: tab.path, data: legacy })
+                .then(() => localStorage.removeItem(legacyKey))
+                .catch(() => {});
+            }
+          } catch {}
+        }
+        setMessages(loaded);
+      })
+      .catch(e => { console.error(e); if (!cancelled) setMessages([]); });
+    return () => { cancelled = true; };
   }, [tab.path]);
 
   // Load checkpoints for this session
   useEffect(() => {
-    try {
-      const rawCkpts = localStorage.getItem(`claude_checkpoints_${tab.path}`);
-      if (rawCkpts) {
-        setCheckpoints(JSON.parse(rawCkpts));
-      } else {
-        setCheckpoints([]);
-      }
-    } catch (e) {
-      setCheckpoints([]);
-    }
+    let cancelled = false;
+    invoke<string>("load_checkpoints", { sessionId: tab.path })
+      .then(raw => {
+        if (cancelled) return;
+        try {
+          setCheckpoints(JSON.parse(raw));
+        } catch {
+          setCheckpoints([]);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCheckpoints([]);
+      });
+    return () => { cancelled = true; };
   }, [tab.path]);
+
+  // Load permission mode for this session
+  useEffect(() => {
+    try {
+      const savedMode = localStorage.getItem(`claude_permission_mode_${tab.path}`);
+      if (savedMode) {
+        setSelectedMode(savedMode as PermissionMode);
+      } else {
+        setSelectedMode((settings.claudePermissionMode as PermissionMode) || "auto");
+      }
+    } catch {
+      setSelectedMode((settings.claudePermissionMode as PermissionMode) || "auto");
+    }
+  }, [tab.path, settings.claudePermissionMode]);
+
+  // Save permission mode when it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(`claude_permission_mode_${tab.path}`, selectedMode);
+    } catch {}
+  }, [selectedMode, tab.path]);
+
+  // Persist messages to disk (avoids localStorage quota issues with base64 image previews)
+  const persistMessages = (msgs: Message[]) => {
+    invoke("save_messages", { sessionId: tab.path, data: JSON.stringify(msgs) })
+      .catch(e => console.error("Failed to save messages:", e));
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -310,8 +375,9 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
       if (!checkpointPanelRef.current?.contains(e.target as Node) &&
           !checkpointBtnRef.current?.contains(e.target as Node)) {
         setShowCheckpointPanel(false);
-        setEditingCheckpointId(null);
-        setConfirmRestoreId(null);
+        // NB: do not clear confirmRestoreId here — the restore confirm modal lives outside the
+        // panel, so clearing it on mousedown would unmount the modal before its button's click
+        // fires. The modal handles its own dismissal via its backdrop.
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -430,13 +496,13 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
     setMessages([]);
     setAttachments([]);
     setShowBrowseInput(false);
-    localStorage.removeItem(`claude_messages_${tab.path}`);
+    invoke("delete_messages", { sessionId: tab.path }).catch(e => console.error("Failed to clear messages:", e));
   };
 
   const MAX_CHECKPOINTS = 10;
 
   // Internal helper: snapshot current files + messages into a Checkpoint
-  const buildCheckpoint = async (snapshotMessages: Message[], label: string): Promise<Checkpoint> => {
+  const buildCheckpoint = async (snapshotMessages: Message[], label: string, customId?: string): Promise<Checkpoint> => {
     const cwd = settings.claudeFolder || "";
     let files: Record<string, string> = {};
     if (cwd) {
@@ -449,34 +515,30 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
       }
     }
     const now = Date.now();
-    return { id: `ckpt_${now}`, label, timestamp: now, messages: snapshotMessages, files };
+    return { id: customId || `ckpt_${now}`, label, timestamp: now, messages: snapshotMessages, files };
   };
 
   // Persist updated checkpoint list, trim to MAX_CHECKPOINTS
-  const saveCheckpoints = (updated: Checkpoint[]) => {
+  const saveCheckpoints = async (updated: Checkpoint[]) => {
     setCheckpoints(updated);
     try {
-      localStorage.setItem(`claude_checkpoints_${tab.path}`, JSON.stringify(updated));
-    } catch {
-      // Storage quota: keep only 3 most recent if full
-      const trimmed = updated.slice(0, 3);
-      setCheckpoints(trimmed);
-      try { localStorage.setItem(`claude_checkpoints_${tab.path}`, JSON.stringify(trimmed)); } catch {}
+      await invoke("save_checkpoints", { sessionId: tab.path, data: JSON.stringify(updated) });
+    } catch (e) {
+      console.error("Failed to save checkpoints to disk:", e);
     }
   };
 
-  const handleCreateCheckpoint = async () => {
-    if (messages.length === 0 || isSavingCheckpoint) return;
-    setIsSavingCheckpoint(true);
-    try {
-      const label = `Checkpoint ${new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`;
-      const newCkpt = await buildCheckpoint([...messages], label);
-      saveCheckpoints([newCkpt, ...checkpoints].slice(0, MAX_CHECKPOINTS));
-    } catch (e) {
-      console.error("Failed to create checkpoint:", e);
-    } finally {
-      setIsSavingCheckpoint(false);
-    }
+  // Click a checkpoint → scroll to the request it was captured before, briefly highlight it
+  const handleScrollToCheckpoint = (ckpt: Checkpoint) => {
+    setShowCheckpointPanel(false);
+    setConfirmRestoreId(null);
+    setHighlightedCkptId(ckpt.id);
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    // Defer so the panel unmounts before we scroll the message into view
+    setTimeout(() => {
+      messageRefs.current[ckpt.id]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+    highlightTimerRef.current = window.setTimeout(() => setHighlightedCkptId(null), 2200);
   };
 
   // Trigger confirmation UI (does not restore yet)
@@ -510,13 +572,22 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
         }
       }
 
-      // 4. Restore messages
-      const restored: Message[] = [
-        ...ckpt.messages,
-        { role: "compact" as const, content: `__restored:${ckpt.label}` }
-      ];
+      // 4. Restore messages: drop the request linked to this checkpoint and everything after it.
+      // The checkpoint was captured right before that request, so truncating the live conversation
+      // at its index reproduces the pre-request state. Fall back to the stored snapshot if the
+      // linked message is no longer present (e.g. after an earlier restore).
+      const idx = messages.findIndex(m => m.checkpointId === ckpt.id);
+      const restored: Message[] = idx >= 0 ? messages.slice(0, idx) : [...ckpt.messages];
       setMessages(restored);
-      localStorage.setItem(`claude_messages_${tab.path}`, JSON.stringify(restored));
+      persistMessages(restored);
+
+      // 5. Prune checkpoints: the restored one and any newer ones (stored newest-first) now point
+      // to requests that were just removed, so drop them — keep only checkpoints before this point.
+      const ckptIdx = checkpoints.findIndex(c => c.id === ckpt.id);
+      if (ckptIdx >= 0) {
+        await saveCheckpoints(checkpoints.slice(ckptIdx + 1));
+      }
+
       setShowCheckpointPanel(false);
       setConfirmRestoreId(null);
       onStatus("", "");
@@ -533,12 +604,6 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
     saveCheckpoints(updated);
   };
 
-  const handleRenameCheckpoint = (id: string, label: string) => {
-    const updated = checkpoints.map(c => c.id === id ? { ...c, label } : c);
-    saveCheckpoints(updated);
-    setEditingCheckpointId(null);
-  };
-
   const handleCompact = async () => {
     const realMessages = messages.filter(m => m.role !== "compact");
     if (realMessages.length < 2 || isCompacting || isLoading) return;
@@ -546,7 +611,7 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
     onStatus("Compacting context...", "");
     const apiKey = settings.claudeApiKey || "";
     try {
-      const summary = await invoke<string>("call_claude_api", {
+      const summary = await invoke<ClaudeReply>("call_claude_api", {
         apiKey,
         model: localModel || settings.claudeModel || "claude-sonnet-4-6",
         messages: [
@@ -557,14 +622,15 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
         permissionMode: "default",
         effortLevel: "low",
         cwd: settings.claudeFolder || "",
-        extraDirs: []
+        extraDirs: [],
+        allowedTools: settings.claudeAllowedTools || ""
       });
       const compacted: Message[] = [
         { role: "compact", content: "" },
-        { role: "user", content: `[Context Summary]\n${summary.trim()}` },
+        { role: "user", content: `[Context Summary]\n${summary.text.trim()}` },
       ];
       setMessages(compacted);
-      localStorage.setItem(`claude_messages_${tab.path}`, JSON.stringify(compacted));
+      persistMessages(compacted);
       onStatus("", "");
     } catch (e) {
       console.error(e);
@@ -591,7 +657,7 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
         .filter(m => m.role !== "compact")
         .map(m => ({ role: m.role, content: m.cliContent ?? m.content }));
       const modeOption = MODE_OPTIONS.find(o => o.id === selectedMode);
-      const response = await invoke<string>("call_claude_api", {
+      const response = await invoke<ClaudeReply>("call_claude_api", {
         apiKey: settings.claudeApiKey || "",
         model: localModel || settings.claudeModel || "claude-sonnet-4-6",
         messages: backendMessages,
@@ -601,16 +667,18 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
         cwd: settings.claudeFolder || "",
         extraDirs: [],
         skipPermissions: true,
+        allowedTools: settings.claudeAllowedTools || "",
+        thinking: thinkingEnabled
       });
-      const updated = [...withoutLastAssistant, { role: "assistant" as const, content: response }];
+      const updated = [...withoutLastAssistant, { role: "assistant" as const, content: response.text, thinking: response.thinking || undefined, timestamp: Date.now() }];
       setMessages(updated);
-      localStorage.setItem(`claude_messages_${tab.path}`, JSON.stringify(updated));
-      setNeedsPermission(detectsPermissionRequest(response));
+      persistMessages(updated);
+      setNeedsPermission(detectsPermissionRequest(response.text));
       onStatus("", "");
     } catch (e) {
-      const updated = [...withoutLastAssistant, { role: "assistant" as const, content: `Error: ${e}` }];
+      const updated = [...withoutLastAssistant, { role: "assistant" as const, content: `Error: ${e}`, timestamp: Date.now() }];
       setMessages(updated);
-      localStorage.setItem(`claude_messages_${tab.path}`, JSON.stringify(updated));
+      persistMessages(updated);
       onStatus("Error talking to Claude", "");
     } finally {
       setIsLoading(false);
@@ -664,11 +732,14 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
     const displayContent = displayAttachmentText + input.trim();
     const cliContent = cliAttachmentText + input.trim();
 
+    const ckptId = `ckpt_${Date.now()}`;
     const userMessage: Message = {
       role: "user",
       content: displayContent,
       cliContent: cliContent !== displayContent ? cliContent : undefined,
       imagePreviews: imagePreviews.length > 0 ? imagePreviews : undefined,
+      checkpointId: ckptId,
+      timestamp: Date.now(),
     };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
@@ -680,10 +751,11 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
     const msgPreview = userMessage.content.trim().slice(0, 32) + (userMessage.content.trim().length > 32 ? "…" : "");
     const autoLabel = `Auto · ${new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })} — "${msgPreview}"`;
     const snapshotAtSend = [...messages]; // state before user message
-    buildCheckpoint(snapshotAtSend, autoLabel).then(newCkpt => {
+    buildCheckpoint(snapshotAtSend, autoLabel, ckptId).then(newCkpt => {
       setCheckpoints(prev => {
         const updated = [newCkpt, ...prev].slice(0, MAX_CHECKPOINTS);
-        try { localStorage.setItem(`claude_checkpoints_${tab.path}`, JSON.stringify(updated)); } catch {}
+        invoke("save_checkpoints", { sessionId: tab.path, data: JSON.stringify(updated) })
+          .catch(e => console.error("Failed to auto-save checkpoint:", e));
         return updated;
       });
     }).catch(() => {});
@@ -691,8 +763,8 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
     setIsLoading(true);
     onStatus("Claude is thinking...", "");
 
-    // Save user message immediately to local storage
-    localStorage.setItem(`claude_messages_${tab.path}`, JSON.stringify(newMessages));
+    // Save user message immediately to disk
+    persistMessages(newMessages);
 
     // Update Session Title in list on the first message
     if (newMessages.filter(m => m.role === "user").length === 1) {
@@ -731,7 +803,7 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
 
       const modeOption = MODE_OPTIONS.find(o => o.id === selectedMode);
 
-      const response = await invoke<string>("call_claude_api", {
+      const response = await invoke<ClaudeReply>("call_claude_api", {
         apiKey,
         model: localModel || settings.claudeModel || "claude-sonnet-4-6",
         messages: backendMessages,
@@ -739,19 +811,24 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
         permissionMode: modeOption?.cliValue || "auto",
         effortLevel: selectedEffort,
         cwd: settings.claudeFolder || "",
-        extraDirs: []
+        extraDirs: [],
+        allowedTools: settings.claudeAllowedTools || "",
+        thinking: thinkingEnabled,
+        // In non-interactive `-p` mode there is no prompt UI, so "dontAsk"/"bypassPermissions"
+        // fail closed (deny) unless we explicitly skip permission checks.
+        skipPermissions: selectedMode === "dontAsk" || selectedMode === "bypassPermissions"
       });
 
-      const updatedMessages = [...newMessages, { role: "assistant" as const, content: response }];
+      const updatedMessages = [...newMessages, { role: "assistant" as const, content: response.text, thinking: response.thinking || undefined, timestamp: Date.now() }];
       setMessages(updatedMessages);
-      localStorage.setItem(`claude_messages_${tab.path}`, JSON.stringify(updatedMessages));
-      setNeedsPermission(detectsPermissionRequest(response));
+      persistMessages(updatedMessages);
+      setNeedsPermission(detectsPermissionRequest(response.text));
       onStatus("", "");
     } catch (e) {
       console.error(e);
-      const updatedMessages = [...newMessages, { role: "assistant" as const, content: `Error: ${e}` }];
+      const updatedMessages = [...newMessages, { role: "assistant" as const, content: `Error: ${e}`, timestamp: Date.now() }];
       setMessages(updatedMessages);
-      localStorage.setItem(`claude_messages_${tab.path}`, JSON.stringify(updatedMessages));
+      persistMessages(updatedMessages);
       onStatus("Error talking to Claude", "");
     } finally {
       setIsLoading(false);
@@ -794,19 +871,6 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
               <span className="codicon codicon-milestone" style={{ fontSize: 12 }} />
               {checkpoints.length > 0 ? `${checkpoints.length} checkpoint${checkpoints.length > 1 ? "s" : ""}` : "Checkpoints"}
             </button>
-            {messages.length > 0 && (
-              <button
-                onClick={handleCreateCheckpoint}
-                disabled={isSavingCheckpoint}
-                title="Save checkpoint of current conversation"
-                style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "1px solid transparent", cursor: isSavingCheckpoint ? "default" : "pointer", color: isSavingCheckpoint ? "#007acc" : "#888", fontSize: 11, padding: "2px 7px", borderRadius: 4, transition: "all 0.15s" }}
-                onMouseEnter={e => { if (!isSavingCheckpoint) { e.currentTarget.style.color = "#007acc"; e.currentTarget.style.background = "#f0f7ff"; e.currentTarget.style.borderColor = "#b3d1f0"; } }}
-                onMouseLeave={e => { if (!isSavingCheckpoint) { e.currentTarget.style.color = "#888"; e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "transparent"; } }}
-              >
-                <span className={`codicon ${isSavingCheckpoint ? "codicon-loading codicon-modifier-spin" : "codicon-save"}`} style={{ fontSize: 12 }} />
-                {isSavingCheckpoint ? "Saving…" : "Save"}
-              </button>
-            )}
           </div>
           {/* Right: Clear */}
           {messages.length > 0 && (
@@ -837,18 +901,7 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
               CHECKPOINTS
               <span style={{ fontWeight: 400, color: "#bbb", fontSize: 10 }}>({checkpoints.length}/{MAX_CHECKPOINTS})</span>
             </span>
-            {messages.length > 0 && (
-              <button
-                onClick={handleCreateCheckpoint}
-                disabled={isSavingCheckpoint}
-                style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, padding: "3px 10px", background: isSavingCheckpoint ? "#5ca8d0" : "#007acc", color: "#fff", border: "none", borderRadius: 4, cursor: isSavingCheckpoint ? "default" : "pointer", fontWeight: 500 }}
-                onMouseEnter={e => { if (!isSavingCheckpoint) e.currentTarget.style.background = "#005f99"; }}
-                onMouseLeave={e => { if (!isSavingCheckpoint) e.currentTarget.style.background = "#007acc"; }}
-              >
-                <span className={`codicon ${isSavingCheckpoint ? "codicon-loading codicon-modifier-spin" : "codicon-save"}`} style={{ fontSize: 11 }} />
-                {isSavingCheckpoint ? "Saving…" : "Save now"}
-              </button>
-            )}
+            <span style={{ fontWeight: 400, color: "#bbb", fontSize: 10 }}>Auto-saved on each send</span>
           </div>
 
           {/* Panel Body */}
@@ -856,7 +909,7 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
             <div style={{ padding: "28px 16px", textAlign: "center", color: "#bbb", fontSize: 12 }}>
               <span className="codicon codicon-milestone" style={{ fontSize: 28, display: "block", marginBottom: 10, opacity: 0.35 }} />
               No checkpoints yet.<br />
-              <span style={{ color: "#ccc" }}>Click <strong style={{ color: "#007acc" }}>Save</strong> to capture the current conversation state.</span>
+              <span style={{ color: "#ccc" }}>A checkpoint is captured automatically every time you send a message.</span>
             </div>
           ) : (
             <div style={{ maxHeight: 300, overflowY: "auto" }}>
@@ -872,60 +925,25 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
                     <div style={{ fontSize: 10, color: "#bbb", marginBottom: 2 }}>
                       {new Date(ckpt.timestamp).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                       {" · "}{ckpt.messages.filter(m => m.role !== "compact").length} messages
-                      {Object.keys(ckpt.files ?? {}).length > 0 && ` · ${Object.keys(ckpt.files).length} files`}
                     </div>
-                    {editingCheckpointId === ckpt.id ? (
-                      <input
-                        value={editingLabel}
-                        onChange={e => setEditingLabel(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === "Enter") handleRenameCheckpoint(ckpt.id, editingLabel.trim() || ckpt.label);
-                          if (e.key === "Escape") setEditingCheckpointId(null);
-                        }}
-                        onBlur={() => handleRenameCheckpoint(ckpt.id, editingLabel.trim() || ckpt.label)}
-                        autoFocus
-                        style={{ fontSize: 12, padding: "2px 6px", border: "1px solid #007acc", borderRadius: 4, outline: "none", width: "100%", boxSizing: "border-box" }}
-                      />
-                    ) : (
-                      <div
-                        onClick={() => { setEditingCheckpointId(ckpt.id); setEditingLabel(ckpt.label); }}
-                        title="Click to rename"
-                        style={{ fontSize: 12, color: "#333", fontWeight: 500, cursor: "text", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                      >
-                        {ckpt.label}
-                      </div>
-                    )}
-                  </div>
-                  {confirmRestoreId === ckpt.id ? (
-                    <div style={{ display: "flex", gap: 4, flexShrink: 0, alignItems: "center" }}>
-                      <button
-                        onClick={() => handleConfirmRestore(ckpt)}
-                        disabled={isRestoring}
-                        style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, padding: "3px 9px", background: "#e0573e", color: "#fff", border: "none", borderRadius: 4, cursor: isRestoring ? "default" : "pointer", fontWeight: 600, flexShrink: 0 }}
-                      >
-                        <span className={`codicon ${isRestoring ? "codicon-loading codicon-modifier-spin" : "codicon-check"}`} style={{ fontSize: 11 }} />
-                        {isRestoring ? "Restoring…" : `Confirm${Object.keys(ckpt.files ?? {}).length > 0 ? ` (${Object.keys(ckpt.files).length} files)` : ""}`}
-                      </button>
-                      <button
-                        onClick={() => setConfirmRestoreId(null)}
-                        disabled={isRestoring}
-                        style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, background: "none", border: "1px solid #e0e0e0", borderRadius: 4, cursor: "pointer", color: "#888", flexShrink: 0 }}
-                      >
-                        <span className="codicon codicon-close" style={{ fontSize: 11 }} />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => handleRestoreCheckpoint(ckpt)}
-                      title={`Restore to this checkpoint${Object.keys(ckpt.files ?? {}).length > 0 ? ` · ${Object.keys(ckpt.files).length} files will be restored` : ""}`}
-                      style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, padding: "3px 9px", background: "#f0f7ff", color: "#007acc", border: "1px solid #b3d1f0", borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 500 }}
-                      onMouseEnter={e => { e.currentTarget.style.background = "#d0e8ff"; e.currentTarget.style.borderColor = "#7ab8f5"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = "#f0f7ff"; e.currentTarget.style.borderColor = "#b3d1f0"; }}
+                    <div
+                      onClick={() => handleScrollToCheckpoint(ckpt)}
+                      title="Jump to this request"
+                      style={{ fontSize: 12, color: "#333", fontWeight: 500, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                     >
-                      <span className="codicon codicon-history" style={{ fontSize: 11 }} />
-                      Restore
-                    </button>
-                  )}
+                      {ckpt.label}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleRestoreCheckpoint(ckpt)}
+                    title="Restore to this checkpoint"
+                    style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, padding: "3px 9px", background: "#f0f7ff", color: "#007acc", border: "1px solid #b3d1f0", borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 500 }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "#d0e8ff"; e.currentTarget.style.borderColor = "#7ab8f5"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "#f0f7ff"; e.currentTarget.style.borderColor = "#b3d1f0"; }}
+                  >
+                    <span className="codicon codicon-history" style={{ fontSize: 11 }} />
+                    Restore
+                  </button>
                   <button
                     onClick={() => handleDeleteCheckpoint(ckpt.id)}
                     title="Delete this checkpoint"
@@ -941,6 +959,59 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
           )}
         </div>
       )}
+
+      {/* Restore confirmation dialog (shared by checkpoint panel and per-message restore) */}
+      {(() => {
+        const pendingCkpt = confirmRestoreId ? checkpoints.find(c => c.id === confirmRestoreId) : null;
+        if (!pendingCkpt) return null;
+        const idx = messages.findIndex(m => m.checkpointId === pendingCkpt.id);
+        const removeCount = idx >= 0 ? messages.slice(idx).filter(m => m.role !== "compact").length : 0;
+        const hasFiles = Object.keys(pendingCkpt.files ?? {}).length > 0;
+        return (
+          <div
+            onClick={() => { if (!isRestoring) setConfirmRestoreId(null); }}
+            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background: "#fff", borderRadius: 10, boxShadow: "0 16px 40px -8px rgba(0,0,0,0.3)", width: "100%", maxWidth: 380, overflow: "hidden" }}
+            >
+              <div style={{ padding: "16px 18px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                <span className="codicon codicon-history" style={{ fontSize: 18, color: "#e0573e" }} />
+                <span style={{ fontSize: 15, fontWeight: 600, color: "#222" }}>Restore checkpoint?</span>
+              </div>
+              <div style={{ padding: "0 18px 4px", fontSize: 12.5, color: "#555", lineHeight: 1.5 }}>
+                <div style={{ marginBottom: 8, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {pendingCkpt.label}
+                </div>
+                {removeCount > 0 ? (
+                  <div><strong style={{ color: "#e0573e" }}>{removeCount} message{removeCount > 1 ? "s" : ""}</strong> after this point will be removed.</div>
+                ) : (
+                  <div>This is the latest checkpoint — no messages will be removed.</div>
+                )}
+                {hasFiles && <div style={{ marginTop: 4 }}>Workspace files will be reverted to this checkpoint.</div>}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "14px 18px 16px" }}>
+                <button
+                  onClick={() => setConfirmRestoreId(null)}
+                  disabled={isRestoring}
+                  style={{ fontSize: 12, padding: "6px 14px", background: "none", border: "1px solid #d4d4d4", borderRadius: 6, cursor: isRestoring ? "default" : "pointer", color: "#555", fontWeight: 500 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleConfirmRestore(pendingCkpt)}
+                  disabled={isRestoring}
+                  style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, padding: "6px 14px", background: "#e0573e", color: "#fff", border: "none", borderRadius: 6, cursor: isRestoring ? "default" : "pointer", fontWeight: 600 }}
+                >
+                  <span className={`codicon ${isRestoring ? "codicon-loading codicon-modifier-spin" : "codicon-check"}`} style={{ fontSize: 12 }} />
+                  {isRestoring ? "Restoring…" : "Restore"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Message List Area */}
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", padding: "24px" }}>
@@ -1007,9 +1078,11 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
                 </div>
               );
             }
+            const isHighlighted = !!m.checkpointId && m.checkpointId === highlightedCkptId;
             return (
               <div
                 key={idx}
+                ref={el => { if (m.checkpointId) messageRefs.current[m.checkpointId] = el; }}
                 className="selectable-text"
                 style={{
                   display: "flex",
@@ -1021,7 +1094,8 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
                   lineHeight: "1.6",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                  boxShadow: isHighlighted ? "0 0 0 3px rgba(224,87,62,0.55)" : "0 1px 2px rgba(0,0,0,0.05)",
+                  transition: "box-shadow 0.3s ease",
                   userSelect: "text",
                   WebkitUserSelect: "text",
                   alignSelf: m.role === "user" ? "flex-end" : "flex-start",
@@ -1040,11 +1114,89 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
                     ))}
                   </div>
                 )}
+                {m.role === "assistant" && m.thinking && (
+                  <details style={{ marginBottom: 8 }}>
+                    <summary style={{ cursor: "pointer", fontSize: 11, color: "#9a6b00", userSelect: "none", display: "flex", alignItems: "center", gap: 5, listStyle: "none" }}>
+                      <span className="codicon codicon-lightbulb" style={{ fontSize: 12 }} />
+                      <span style={{ fontWeight: 600 }}>Thinking</span>
+                      <span style={{ color: "#bbb", fontWeight: 400 }}>· click to show/hide</span>
+                    </summary>
+                    <div style={{ marginTop: 6, padding: "8px 10px", background: "#fffaf0", border: "1px solid #f3e2c0", borderRadius: 6, fontSize: 12, color: "#6b6357", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55, fontStyle: "italic" }}>
+                      {m.thinking}
+                    </div>
+                  </details>
+                )}
                 {m.role === "assistant" ? (
                   <MarkdownRenderer content={m.content} />
                 ) : (
                   m.content ? <div>{m.content}</div> : null
                 )}
+
+                {/* Message Actions & Timestamp */}
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  marginTop: "6px",
+                  fontSize: "10px",
+                  opacity: 0.6,
+                  userSelect: "none",
+                  borderTop: m.content ? `1px solid ${m.role === "user" ? "rgba(255,255,255,0.2)" : "#f0f0f0"}` : "none",
+                  paddingTop: "4px"
+                }}>
+                  <span>
+                    {m.timestamp ? new Date(m.timestamp).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : ""}
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    {/* Copy Button */}
+                    <button
+                      onClick={() => navigator.clipboard.writeText(m.content)}
+                      title="Copy content"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: "2px",
+                        color: m.role === "user" ? "#fff" : "#666",
+                        display: "flex",
+                        alignItems: "center",
+                        opacity: 0.7,
+                        transition: "opacity 0.15s"
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+                      onMouseLeave={e => e.currentTarget.style.opacity = "0.7"}
+                    >
+                      <span className="codicon codicon-copy" style={{ fontSize: 11 }} />
+                    </button>
+
+                    {/* Restore Checkpoint Button */}
+                    {m.role === "user" && m.checkpointId && checkpoints.some(c => c.id === m.checkpointId) && (
+                      <button
+                        onClick={() => {
+                          const ckpt = checkpoints.find(c => c.id === m.checkpointId);
+                          if (ckpt) handleRestoreCheckpoint(ckpt);
+                        }}
+                        title="Undo changes up to this point"
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: "2px",
+                          color: m.role === "user" ? "#fff" : "#666",
+                          display: "flex",
+                          alignItems: "center",
+                          opacity: 0.7,
+                          transition: "opacity 0.15s"
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+                        onMouseLeave={e => e.currentTarget.style.opacity = "0.7"}
+                      >
+                        <span className="codicon codicon-history" style={{ fontSize: 11 }} />
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             );
           })
@@ -1256,24 +1408,20 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
           </div>
 
           {/* Thinking row */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", borderBottom: "1px solid #f0f0f0" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px" }}>
             <span style={{ fontSize: 13, color: "#333" }}>Thinking</span>
             <Toggle on={thinkingEnabled} onChange={setThinkingEnabled} />
-          </div>
-
-          {/* Auto switch row */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", background: autoSwitchModel ? "#fafafa" : "transparent" }}>
-            <span style={{ fontSize: 13, color: "#333" }}>Switch models when a message is flagged</span>
-            <Toggle on={autoSwitchModel} onChange={setAutoSwitchModel} />
           </div>
         </div>
       )}
 
-      {/* Attach Menu Dropdown */}
+      {/* Attach Menu Dropdown — centered to match the input box, anchored to the + button */}
       {showAttachMenu && (
+        <div style={{ position: "absolute", bottom: 80, left: 16, right: 16, zIndex: 200 }}>
+        <div style={{ maxWidth: 800, margin: "0 auto", position: "relative" }}>
         <div
           ref={attachDropdownRef}
-          style={{ position: "absolute", bottom: 80, left: 24, background: "#fff", border: "1px solid #d4d4d4", borderRadius: 8, boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05)", padding: 4, minWidth: 210, zIndex: 200 }}
+          style={{ position: "absolute", bottom: 0, left: 6, background: "#fff", border: "1px solid #d4d4d4", borderRadius: 8, boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05)", padding: 4, minWidth: 210 }}
         >
           <button
             onClick={() => handleAttachFile("upload")}
@@ -1309,11 +1457,15 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
             <span>Browse the web</span>
           </button>
         </div>
+        </div>
+        </div>
       )}
 
-      {/* Modes Dropdown Menu */}
+      {/* Modes Dropdown Menu — centered to match the input box, anchored to the mode button */}
       {showModesMenu && (
-        <div 
+        <div style={{ position: "absolute", bottom: 80, left: 16, right: 16, zIndex: 100 }}>
+        <div style={{ maxWidth: 800, margin: "0 auto", position: "relative" }}>
+        <div
           ref={dropdownRef}
           style={{
             position: "absolute",
@@ -1325,10 +1477,9 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
             flexDirection: "column",
             gap: "4px",
             boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
-            bottom: 80,
-            right: 24,
-            width: 280,
-            zIndex: 100
+            bottom: 0,
+            right: 6,
+            width: 280
           }}
         >
           {/* Menu Title */}
@@ -1389,6 +1540,8 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
               </button>
             );
           })}
+        </div>
+        </div>
         </div>
       )}
 
@@ -1477,12 +1630,6 @@ export function ChatPanel({ tab, settings, onStatus }: Props) {
                 overflowY: "auto"
               }}
             />
-            <button
-              title="Voice Input"
-              style={{ background: "none", border: "none", cursor: "pointer", color: "#888", padding: 4 }}
-            >
-              <span className="codicon codicon-mic" style={{ fontSize: 16 }} />
-            </button>
           </div>
 
           {/* Controls Row */}

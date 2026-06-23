@@ -7,6 +7,7 @@ import { PreviewView } from "./PreviewView";
 import { SqlFileView } from "./SqlFileView";
 import { MarkdownView } from "./MarkdownView";
 import { XlsxView } from "./XlsxView";
+import { TextFileView } from "./TextFileView";
 import { Centered } from "./components/Centered";
 
 interface Props {
@@ -46,14 +47,18 @@ export function ReportTabContent({
   const isSqlFile = ext === "sql";
   const isMdFile = ext === "md";
   const isXlsxFile = ext === "xlsx";
+  const isTextFile = ext ? new Set([
+    "txt", "yaml", "yml", "json", "xml", "log", "toml", "config",
+    "ts", "tsx", "js", "jsx", "css", "html", "cs", "py"
+  ]).has(ext) : false;
 
   useEffect(() => {
     if (isServerTab) return;
     setMetadata(null);
     setMetaError(null);
-    if (isSqlFile || isMdFile || isXlsxFile) { setLoading(false); return; }
+    if (isSqlFile || isMdFile || isXlsxFile || isTextFile) { setLoading(false); return; }
     if (ext !== "rdl" && ext !== "rdlc") {
-      setMetaError("Unsupported file type. Currently only .rdl, .rdlc, .sql, .md, and .xlsx files are supported.");
+      setMetaError("Unsupported file type. Currently only .rdl, .rdlc, .sql, .md, .xlsx, and standard text/config files are supported.");
       return;
     }
     setLoading(true);
@@ -74,7 +79,7 @@ export function ReportTabContent({
     }
   }
 
-  const isSimpleViewer = isSqlFile || isMdFile || isXlsxFile;
+  const isSimpleViewer = isSqlFile || isMdFile || isXlsxFile || isTextFile;
   const visibleViews = isServerTab
     ? VIEWS.filter(v => v.id === "preview")
     : isSimpleViewer ? [] : VIEWS;
@@ -149,6 +154,9 @@ export function ReportTabContent({
         )}
         {!isServerTab && !loading && !metaError && isXlsxFile && (
           <XlsxView tab={tab} />
+        )}
+        {!isServerTab && !loading && !metaError && isTextFile && (
+          <TextFileView tab={tab} onStatus={onStatus} onUpdateTabMetadata={onUpdateTabMetadata} toolbarRightEl={toolbarRightEl} />
         )}
         {!isServerTab && !loading && !metaError && metadata && !isSqlFile && (
           <>

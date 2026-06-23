@@ -26,7 +26,7 @@ export function useHotkeys(map: HotkeyMap) {
       if (map[key]) {
         e.preventDefault();
         map[key]();
-      } else if (e.key === "F12") {
+      } else if (e.key === "F12" && !import.meta.env.DEV) {
         e.preventDefault();
       }
     }

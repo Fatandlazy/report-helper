@@ -10,7 +10,7 @@ const defaultSettings: AppSettings = {
   ssrsUsername: "",
   ssrsPassword: "",
   claudeApiKey: "",
-  claudeModel: "claude-sonnet-4-5",
+  claudeModel: "",
   claudeFolder: "",
   lastSection: "explorer",
   activeConnectionId: "",

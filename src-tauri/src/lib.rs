@@ -236,6 +236,61 @@ fn read_text_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn save_checkpoints(app: tauri::AppHandle, session_id: String, data: String) -> Result<(), String> {
+    use tauri::Manager;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let checkpoints_dir = app_dir.join("checkpoints");
+    std::fs::create_dir_all(&checkpoints_dir).map_err(|e| e.to_string())?;
+    let file_path = checkpoints_dir.join(format!("{}.json", session_id));
+    std::fs::write(file_path, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn load_checkpoints(app: tauri::AppHandle, session_id: String) -> Result<String, String> {
+    use tauri::Manager;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let file_path = app_dir.join("checkpoints").join(format!("{}.json", session_id));
+    if !file_path.exists() {
+        return Ok("[]".to_string());
+    }
+    std::fs::read_to_string(file_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_messages(app: tauri::AppHandle, session_id: String, data: String) -> Result<(), String> {
+    use tauri::Manager;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let messages_dir = app_dir.join("messages");
+    std::fs::create_dir_all(&messages_dir).map_err(|e| e.to_string())?;
+    let file_path = messages_dir.join(format!("{}.json", session_id));
+    std::fs::write(file_path, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn load_messages(app: tauri::AppHandle, session_id: String) -> Result<String, String> {
+    use tauri::Manager;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let file_path = app_dir.join("messages").join(format!("{}.json", session_id));
+    if !file_path.exists() {
+        return Ok("[]".to_string());
+    }
+    std::fs::read_to_string(file_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_messages(app: tauri::AppHandle, session_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let file_path = app_dir.join("messages").join(format!("{}.json", session_id));
+    if file_path.exists() {
+        std::fs::remove_file(file_path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn get_file_modified_time(path: String) -> Result<u64, String> {
     let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     let modified = metadata.modified().map_err(|e| e.to_string())?;
@@ -419,10 +474,16 @@ async fn save_temp_image(data_url: String) -> Result<String, String> {
     Ok(file_path.to_string_lossy().to_string())
 }
 
+#[derive(serde::Serialize)]
+struct ClaudeReply {
+    text: String,
+    thinking: String,
+}
+
 #[tauri::command]
 async fn call_claude_api(
     _api_key: String,
-    _model: String,
+    model: String,
     messages: Vec<ChatMessage>,
     system: Option<String>,
     permission_mode: String,
@@ -430,8 +491,14 @@ async fn call_claude_api(
     cwd: Option<String>,
     extra_dirs: Option<Vec<String>>,
     skip_permissions: Option<bool>,
-) -> Result<String, String> {
+    allowed_tools: Option<String>,
+    thinking: Option<bool>,
+) -> Result<ClaudeReply, String> {
     use std::process::{Command, Stdio};
+
+    // Capturing the model's thinking blocks requires the structured stream-json output.
+    // We only switch to it when Thinking is enabled, so normal chat keeps the proven text path.
+    let want_thinking = thinking.unwrap_or(false);
 
     // Format the conversation history
     let mut prompt = String::new();
@@ -440,6 +507,12 @@ async fn call_claude_api(
         prompt.push_str(&format!("[{}]: {}\n", role_label, msg.content));
     }
     prompt.push_str("\nPlease respond to the last User message above.");
+
+    // The Claude CLI has no --thinking flag; extended thinking is triggered by
+    // keywords in the prompt. Append a directive when the user enables Thinking.
+    if want_thinking {
+        prompt.push_str(" Think hard before responding.");
+    }
 
     // Execute local `claude -p` CLI command.
     // On Windows, we run `claude.cmd` directly; on other platforms, we run `claude`.
@@ -450,6 +523,11 @@ async fn call_claude_api(
     let mut cmd = Command::new("claude");
 
     cmd.arg("-p");
+
+    // Select the model the user picked in the chat UI. When empty, the CLI uses its own default.
+    if !model.is_empty() {
+        cmd.arg("--model").arg(&model);
+    }
 
     if let Some(ref dir) = cwd {
         if !dir.is_empty() {
@@ -487,6 +565,18 @@ async fn call_claude_api(
         cmd.arg(sys);
     }
 
+    if let Some(ref tools) = allowed_tools {
+        if !tools.is_empty() {
+            cmd.arg("--allowedTools");
+            cmd.arg(tools);
+        }
+    }
+
+    // Stream-json (requires --verbose in -p mode) exposes the model's thinking blocks.
+    if want_thinking {
+        cmd.arg("--output-format").arg("stream-json").arg("--verbose");
+    }
+
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -511,13 +601,57 @@ async fn call_claude_api(
         return Err(format!("Claude CLI exited with error: {}\n{}", stdout, stderr));
     }
 
+    if want_thinking {
+        // Parse newline-delimited JSON events: collect thinking blocks and the final result text.
+        let mut thinking_buf = String::new();
+        let mut text_buf = String::new();
+        let mut result_text: Option<String> = None;
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            let v: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            match v.get("type").and_then(|t| t.as_str()) {
+                Some("assistant") => {
+                    if let Some(blocks) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()) {
+                        for block in blocks {
+                            match block.get("type").and_then(|t| t.as_str()) {
+                                Some("thinking") => {
+                                    if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
+                                        thinking_buf.push_str(t);
+                                    }
+                                }
+                                Some("text") => {
+                                    if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                                        text_buf.push_str(t);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Some("result") => {
+                    if let Some(r) = v.get("result").and_then(|r| r.as_str()) {
+                        result_text = Some(r.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        let text = result_text.unwrap_or(text_buf).trim().to_string();
+        return Ok(ClaudeReply { text, thinking: thinking_buf.trim().to_string() });
+    }
+
     // Clean up warning messages from stdout if any
     let clean_response = stdout
         .replace("Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.", "")
         .trim()
         .to_string();
 
-    Ok(clean_response)
+    Ok(ClaudeReply { text: clean_response, thinking: String::new() })
 }
 
 #[tauri::command]
@@ -580,6 +714,11 @@ pub fn run() {
             call_claude_api,
             save_temp_image,
             list_anthropic_models,
+            save_checkpoints,
+            load_checkpoints,
+            save_messages,
+            load_messages,
+            delete_messages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

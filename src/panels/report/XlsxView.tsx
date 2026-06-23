@@ -5,6 +5,7 @@ import { transformExcelToFortune } from "@corbe30/fortune-excel";
 import type { Sheet } from "@fortune-sheet/core";
 import "@fortune-sheet/react/dist/index.css";
 import { ReportTab } from "../../types";
+import { ErrorBoundary } from "../../components/ErrorBoundary";
 
 interface Props {
   tab: ReportTab;
@@ -47,9 +48,31 @@ export function XlsxView({ tab }: Props) {
 
     invoke<string>("read_file_base64", { path: tab.path })
       .then(async b64 => {
+        if (cancelled) return;
         const fileName = tab.path.replace(/\\/g, "/").split("/").pop() || "file.xlsx";
         const file = base64ToFile(b64, fileName);
-        await transformExcelToFortune(file, setSheets, setKey, workbookRef);
+        
+        await transformExcelToFortune(
+          file,
+          (newSheets: any[]) => {
+            if (cancelled) return;
+            if (!newSheets || newSheets.length === 0) {
+              setError("No sheets found in this Excel file.");
+              return;
+            }
+            // Ensure all sheets have valid ID and Name to prevent FortuneSheet crashes
+            const sanitized = newSheets.map((s: any, idx: number) => ({
+              ...s,
+              id: s.id || String(idx + 1),
+              name: s.name || `Sheet${idx + 1}`
+            }));
+            setSheets(sanitized);
+          },
+          (newKey: number) => {
+            if (!cancelled) setKey(newKey);
+          },
+          workbookRef
+        );
         if (!cancelled) setLoading(false);
       })
       .catch(e => {
@@ -64,18 +87,25 @@ export function XlsxView({ tab }: Props) {
 
   return (
     <div ref={containerRef} style={{ position: "relative", height: "100%", width: "100%", overflow: "hidden" }}>
-      {size && (
+      {size && sheets && sheets.length > 0 && (
         <div style={{ width: size.w, height: size.h }}>
-          <Workbook
-            key={key}
-            ref={workbookRef}
-            data={sheets}
-            onChange={setSheets}
-            showToolbar={false}
-            showFormulaBar={false}
-            showSheetTabs={true}
-            allowEdit={false}
-          />
+          <ErrorBoundary fallback={
+            <div style={{ padding: "24px", textAlign: "center", color: "#c00" }}>
+              <span className="codicon codicon-error" style={{ fontSize: 24, marginRight: 8, verticalAlign: "middle" }} />
+              Failed to display this spreadsheet. It may be corrupt or incompatible.
+            </div>
+          }>
+            <Workbook
+              key={key}
+              ref={workbookRef}
+              data={sheets}
+              onChange={setSheets}
+              showToolbar={false}
+              showFormulaBar={false}
+              showSheetTabs={true}
+              allowEdit={false}
+            />
+          </ErrorBoundary>
         </div>
       )}
 
